@@ -11,8 +11,24 @@ const SKY_RADIUS = 600;
 const SUN_OFFSET = new THREE.Vector3(70, 120, 45);
 
 // Half-extent of the shadow camera around the player. Smaller = crisper
-// shadows but a smaller region receives them.
+// shadows but a smaller region receives them. Used as the fallback when
+// graphics.shadowRadius is missing or invalid.
 const SHADOW_RADIUS = 70;
+
+// Map a configured shadow-map type string to a THREE constant. Missing or
+// unknown values fall back to PCF (the original behaviour). PCFSoftShadowMap is
+// available only via an explicit shadowType override; no preset selects it.
+const SHADOW_TYPES = {
+  basic: THREE.BasicShadowMap,
+  pcf: THREE.PCFShadowMap,
+  pcfsoft: THREE.PCFSoftShadowMap,
+};
+
+function shadowTypeOf(name) {
+  // Note: BasicShadowMap === 0, so a nullish check (not ||) is required to keep
+  // 'basic' working while still falling back to PCF for missing/unknown values.
+  return SHADOW_TYPES[String(name).toLowerCase()] ?? THREE.PCFShadowMap;
+}
 
 export function createEnvironment(scene, renderer, render, graphics, palette) {
   // --- Sky dome -----------------------------------------------------------
@@ -59,17 +75,21 @@ export function createEnvironment(scene, renderer, render, graphics, palette) {
   let shadowsEnabled = false;
   if (graphics.shadows) {
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.shadowMap.type = shadowTypeOf(graphics.shadowType);
     sun.castShadow = true;
 
     const size = graphics.shadowMapSize || 1024;
     sun.shadow.mapSize.set(size, size);
 
+    const radius =
+      Number.isFinite(graphics.shadowRadius) && graphics.shadowRadius > 0
+        ? graphics.shadowRadius
+        : SHADOW_RADIUS;
     const cam = sun.shadow.camera;
-    cam.left = -SHADOW_RADIUS;
-    cam.right = SHADOW_RADIUS;
-    cam.top = SHADOW_RADIUS;
-    cam.bottom = -SHADOW_RADIUS;
+    cam.left = -radius;
+    cam.right = radius;
+    cam.top = radius;
+    cam.bottom = -radius;
     cam.near = 1;
     cam.far = 420;
     cam.updateProjectionMatrix();

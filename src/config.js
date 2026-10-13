@@ -251,6 +251,11 @@ export const CONFIG = {
   graphics: {
     shadows: false,
     shadowMapSize: 1024,
+    // Shadow-map type ('basic' | 'pcf'). Missing/unknown falls back to PCF in
+    // environment.js. PCFSoft is never selected by a preset (opt-in only, and
+    // only once on-device performance has been proven).
+    shadowType: 'pcf',
+    shadowRadius: 70, // shadow-camera orthographic half-extent (metres)
     skyDome: true,
     // M3.3 lighting intensities. Defaults preserve the existing look; presets
     // inherit them (no preset overrides these in Stage 2).
