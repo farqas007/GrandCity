@@ -3,12 +3,48 @@
 An original open-world 3D action game project. **Milestone M3 — "Detailed City"**
 is a small, playable third-person/first-person city prototype built with
 **vanilla JavaScript and Three.js ES modules**. It builds on the M1.1 and M2
-milestones (detailed city + drivable car) by pushing the procedural detail much
-further. No build step, no framework, no npm dependencies.
+milestones (detailed city + drivable car) and the M3.1 detail pass, and adds a
+**fixed output-resolution system (M3.2)**. No build step, no framework, no npm
+dependencies.
 
 > **Original content only.** The city, textures, and all geometry are generated
 > procedurally at runtime from this repository's own code. Nothing here copies
 > any third-party game's characters, story, map, assets, or branding.
+
+---
+
+## What M3.2 adds (fixed resolution targets)
+
+Resolution is now configured **separately from the visual-detail presets**, and
+each quality name requests one exact internal drawing-buffer size:
+
+| Quality | Label | Requested internal resolution |
+| --- | --- | --- |
+| `low` | 8K | 7680 × 4320 |
+| `medium` (default) | 12K | 11520 × 6480 |
+| `high` | 20K | 19200 × 10800 |
+
+- The request is **never auto-lowered to improve FPS**. It is applied as an exact
+  request (`setPixelRatio(1)` + `setSize(w, h, false)`); the on-screen CSS size
+  is left alone and the canvas is letterboxed to preserve the buffer's aspect.
+- The **actual** drawing buffer is measured back from WebGL
+  (`gl.drawingBufferWidth/Height`) and shown in the HUD (`Draw buffer`) and on
+  the start overlay. A shortfall is **reported, never hidden**.
+- WebGL limits (`MAX_RENDERBUFFER_SIZE`, `MAX_VIEWPORT_DIMS`, `MAX_TEXTURE_SIZE`)
+  are queried up front; if the request exceeds them a ⚠ line names the limit and
+  the measured buffer. 20K (19200 px) is above the 16384 px limit most desktop
+  GPUs report, so on those machines High will honestly read back as
+  16384 × 10800 rather than claiming 20K.
+- If the buffer cannot be allocated at all, or the WebGL context is lost, the
+  overlay shows a **clear message** telling you to pick a lower preset — the
+  game does not crash silently.
+- The three visual-detail presets (facades, shadows, props, fog, tone mapping,
+  …) are unchanged — only the output resolution comes from `CONFIG.resolution`.
+- The legacy `?res=<scale>` override still works in its own window-relative
+  "custom" mode; it is the only path that is *not* a fixed target.
+
+> Not yet done here: spatial **LOD / distance culling**. The extreme-resolution
+> targets are deliberately preserved rather than traded away for frames.
 
 ---
 
@@ -121,16 +157,17 @@ Click the page once to capture the mouse (pointer lock). Press `Esc` to release 
 
 | Parameter | Values | Default | Effect |
 | --- | --- | --- | --- |
-| `quality` | `low` \| `medium` \| `high` | `medium` | Selects the graphics preset |
-| `res` | `0.4` – `1.5` | preset value | Resolution scale multiplier |
+| `quality` | `low` \| `medium` \| `high` | `medium` | Selects the graphics preset **and** its fixed resolution (8K / 12K / 20K) |
+| `res` | `0.4` – `1.5` | *(none)* | Legacy window-relative override; replaces the fixed target with a "custom" buffer |
 | `shadows` | `0` \| `1` | preset value | Force shadows off/on |
 
 Examples: `http://localhost:8000/?quality=low`,
 `http://localhost:8000/?quality=high&shadows=0`,
 `http://localhost:8000/?res=0.6`.
 
-The **Low / Medium / High** and **Shadows** buttons on the start overlay simply
-set these URL parameters and reload.
+Without `res`, the internal resolution is fixed by the quality preset and is
+not adjusted for performance. The **Low / Medium / High** and **Shadows**
+buttons on the start overlay simply set these URL parameters and reload.
 
 ---
 
@@ -155,7 +192,7 @@ out; the car is left parked and the first-person camera returns.
 
 | Setting | Low | Medium (default) | High |
 | --- | --- | --- | --- |
-| Resolution scale | 0.6 | 0.8 | 1.0 |
+| Internal resolution (fixed, M3.2) | 7680×4320 (8K) | 11520×6480 (12K) | 19200×10800 (20K) |
 | Tone mapping | off | on | on |
 | Anisotropy | 1 | 2 | 4 |
 | Fog far | 300 | 400 | 480 |
@@ -192,7 +229,8 @@ GrandCity/
 │   ├── main.js             # boot, renderer setup, quality handling, loop
 │   ├── controls.js         # first-person controls (Pointer Lock API)
 │   ├── vehicle.js          # M2: procedural car + driving controller (physics, chase cam)
-│   ├── hud.js              # FPS / draw-call / position / quality / mode / speed HUD
+│   ├── hud.js              # FPS / draw-call / position / quality / mode / speed / resolution HUD
+│   ├── resolution.js       # M3.2: fixed targets, WebGL capability query, buffer measurement
 │   ├── gfx/
 │   │   └── textures.js      # procedural canvas textures: facade variants, shopfronts, asphalt, pavement, sky
 │   └── world/
@@ -245,8 +283,11 @@ results** (no on-device browser test has been run yet):
   once and shared; only `map` + per-instance tint are used.
 - Antialiasing and post-processing are disabled; `MeshLambertMaterial` and
   `MeshBasicMaterial` avoid expensive PBR shading.
-- Pixel ratio is clamped and scaled (default 0.8 of the clamped device ratio),
-  with a hard cap of 1.5.
+- Output resolution is a **fixed request per preset** (8K / 12K / 20K, M3.2),
+  applied at pixel ratio 1 and measured back from WebGL. It is **not** a
+  performance optimisation and is never silently reduced — on hardware that
+  cannot meet the request the measured buffer is reported and the game keeps
+  running. Use a lower preset (or `?res=`) when frame rate matters.
 - Shadows are off by default and, when enabled, use a modest map that follows
   the player over a limited area.
 
@@ -269,17 +310,29 @@ Tune via `src/config.js` or the URL parameters.
   they do not light up individually.
 - Facade window scale is consistent per height tier, not per building, so very
   small or very tall buildings can stretch slightly.
-- The world is a single fixed-size grid; **LOD / distance culling and the 8K
-  (7680×4320) render foundations are planned for M3.2**, along with an optional
-  "Ultra" preset. Until then every instanced mesh is always drawn and all three
-  presets (including the new M3.1 detail) share the M1 resolution cap.
+- The world is a single fixed-size grid and every instanced mesh is always
+  drawn; **spatial LOD / distance culling and an optional "Ultra" preset remain
+  outstanding (M3.3+)**.
+- **The extreme resolutions are requests, not guarantees.** Browsers/GPUs clamp
+  the drawing buffer to `MAX_RENDERBUFFER_SIZE` / `MAX_VIEWPORT_DIMS` (commonly
+  16384 px, and 8192 px on integrated/mobile GPUs). 20K (19200 px) therefore
+  cannot be met on most current hardware and reads back clamped in the HUD; the
+  game still runs at the measured size. Nothing is silently substituted.
+- At 8K+ the colour buffer alone is >130 MB (12K ≈ 300 MB, 20K ≈ 800 MB), far
+  beyond the target machine's ~1 GB free RAM. On the Celeron N4020 Chromebook,
+  Low (8K) is the only realistic target and may still be slow; if allocation
+  fails the overlay explains it instead of crashing.
 - New M3.1 visuals (shopfront bands, balconies) sit just outside building
   footprints and are **not collidable**; collision continues to use the building
   footprint AABBs only, exactly as in M1/M2.
 - **No automated test suite and no browser/FPS verification has been performed.**
-  Only static syntax / import checks, HTTP asset checks and headless
-  generation/vehicle smoke tests have been run; see the commit message for what
-  was verified.
+  Only static syntax / import checks, HTTP asset checks, headless
+  generation/vehicle smoke tests and the new headless resolution-logic harness
+  have been run; see the commit message for what was verified.
+- The fixed-resolution path is **only proven headless** (targets, capability
+  maths, buffer-measurement plumbing). Whether a real Chrome/GPU actually
+  allocates 8K/12K/20K — and what it clamps to — still needs a **manual browser
+  check** (open the game, read the HUD's `Draw buffer` / `GL cap` rows).
 
 ---
 

@@ -1,7 +1,7 @@
-// GrandCity - M2 entry point.
-// Wires the renderer, environment, city, walking controls and the driving
-// system together and runs the render loop. Kept deliberately small and
-// dependency-free (Three.js only).
+// GrandCity - M3.2 entry point.
+// Wires the renderer, environment, city, walking controls, the driving system
+// and the fixed output-resolution system together and runs the render loop.
+// Kept deliberately small and dependency-free (Three.js only).
 
 import * as THREE from 'three';
 import { CONFIG, PALETTE, applyQuality } from './config.js';
@@ -10,6 +10,15 @@ import { createCity } from './world/city.js';
 import { FirstPersonControls } from './controls.js';
 import { createVehicle, CarController } from './vehicle.js';
 import { createHud } from './hud.js';
+import {
+  pickTarget,
+  queryCaps,
+  predictDrawingBuffer,
+  limitationText,
+  requestBuffer,
+  fitCanvas,
+  labelFor,
+} from './resolution.js';
 
 const canvas = document.getElementById('scene');
 const overlay = document.getElementById('overlay');
@@ -38,32 +47,46 @@ function setParam(key, value) {
   window.location.href = url.toString();
 }
 
-// --- Quality selection: ?quality=low|medium|high, ?res=0.4..1.5, ?shadows=0|1
+// Show the selected quality, requested resolution and measured draw buffer on
+// the start overlay too (the HUD repeats it live in-game).
+function updateResolutionUI(state, caps) {
+  const el = document.getElementById('res-status');
+  if (!el) return;
+  const applied = state.applied;
+  let text =
+    `${state.label} target ${state.target.width}×${state.target.height}` +
+    ` → draw buffer ${applied.actualWidth}×${applied.actualHeight}` +
+    (caps.available && caps.maxRenderbuffer ? ` (GPU max ${caps.maxRenderbuffer})` : '');
+  if (state.limitation) text += ` · ⚠ ${state.limitation}`;
+  if (applied.error) text += ` · ⚠ ${applied.error}`;
+  el.textContent = text;
+  el.classList.toggle('warn', !!state.limitation || !applied.ok);
+}
+
+// --- Quality selection: ?quality=low|medium|high, ?shadows=0|1.
+// Resolution is configured SEPARATELY from the visual-detail presets: every
+// quality maps to a fixed internal drawing buffer (CONFIG.resolution). The
+// legacy "?res=<scale>" override stays available (window-relative).
 const params = new URLSearchParams(window.location.search);
 const activeQuality = applyQuality(params.get('quality') || CONFIG.quality.default);
-
 const resParam = parseFloat(params.get('res'));
-if (Number.isFinite(resParam)) {
-  CONFIG.render.resolutionScale = Math.min(
-    Math.max(resParam, 0.4),
-    CONFIG.render.absoluteMaxPixelRatio
-  );
-}
+
+const resolutionPlan = pickTarget(activeQuality, resParam, {
+  w: window.innerWidth,
+  h: window.innerHeight,
+});
 
 const shadowParam = params.get('shadows');
 if (shadowParam !== null) {
   CONFIG.graphics.shadows = shadowParam === '1' || shadowParam === 'true';
 }
 
-function applyPixelRatio() {
-  const dpr = window.devicePixelRatio || 1;
-  const base = Math.min(dpr, CONFIG.render.maxPixelRatio);
-  let ratio = base * CONFIG.render.resolutionScale;
-  ratio = Math.min(ratio, CONFIG.render.absoluteMaxPixelRatio);
-  ratio = Math.max(ratio, CONFIG.render.minPixelRatio);
-  renderer.setPixelRatio(ratio);
-  return ratio;
-}
+canvas.addEventListener('webglcontextcreationerror', (e) => {
+  fatal(
+    'WebGL could not create a rendering context on this device' +
+      (e && e.statusMessage ? ': ' + e.statusMessage : '.')
+  );
+});
 
 function boot() {
   try {
@@ -87,18 +110,72 @@ function boot() {
     ? THREE.ACESFilmicToneMapping
     : THREE.NoToneMapping;
   renderer.toneMappingExposure = CONFIG.render.toneMappingExposure || 1.0;
-  const pixelRatio = applyPixelRatio();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+
+  const gl = renderer.getContext();
+  const caps = queryCaps(gl);
+
+  // Request the exact target buffer and measure what the GPU actually gives
+  // back. Nothing is auto-lowered; any shortfall is reported, never hidden.
+  let resolutionState = applyResolution();
 
   const scene = new THREE.Scene();
   const env = createEnvironment(scene, renderer, CONFIG.render, CONFIG.graphics, PALETTE);
 
   const camera = new THREE.PerspectiveCamera(
     CONFIG.render.fov,
-    window.innerWidth / window.innerHeight,
+    currentAspect(),
     CONFIG.render.near,
     CONFIG.render.far
   );
+
+  function currentAspect() {
+    const a = resolutionState && resolutionState.applied;
+    if (a && a.actualWidth > 0 && a.actualHeight > 0) {
+      return a.actualWidth / a.actualHeight;
+    }
+    return window.innerWidth / Math.max(1, window.innerHeight);
+  }
+
+  function applyResolution() {
+    const target =
+      resolutionPlan.mode === 'custom'
+        ? pickTarget(activeQuality, resParam, {
+            w: window.innerWidth,
+            h: window.innerHeight,
+          })
+        : resolutionPlan;
+    const predicted = predictDrawingBuffer(target.width, target.height, caps);
+    const applied = requestBuffer(renderer, gl, target.width, target.height);
+    const state = {
+      target,
+      predicted,
+      applied,
+      label: labelFor(target.width, target.height),
+      limitation: limitationText(predicted),
+    };
+
+    updateResolutionUI(state, caps);
+    if (!applied.ok) {
+      fatal(
+        `Could not allocate a ${target.width}×${target.height} drawing buffer on this GPU/driver ` +
+          `(reported ${applied.actualWidth}×${applied.actualHeight}). ` +
+          `Choose a lower preset (Low = 7680×4320) and reload.`
+      );
+    } else if (predicted.clamped) {
+      console.warn(
+        `GrandCity: requested ${target.width}×${target.height} exceeds GPU limit ` +
+          `${predicted.capW}×${predicted.capH}; drawing buffer is ` +
+          `${applied.actualWidth}×${applied.actualHeight}.`
+      );
+    }
+    fitCanvas(
+      canvas,
+      applied.actualWidth || target.width,
+      applied.actualHeight || target.height,
+      { w: window.innerWidth, h: window.innerHeight }
+    );
+    return state;
+  }
   camera.position.set(0, CONFIG.player.eyeHeight, 0);
   camera.rotation.order = 'YXZ';
 
@@ -182,15 +259,32 @@ function boot() {
   }
 
   window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
+    // Fixed targets keep their exact buffer; only the on-screen fit changes.
+    // Custom (?res=) mode is window-relative, so it re-requests the buffer.
+    if (resolutionPlan.mode === 'custom') {
+      resolutionState = applyResolution();
+    } else {
+      const a = resolutionState.applied;
+      fitCanvas(
+        canvas,
+        a.actualWidth || resolutionState.target.width,
+        a.actualHeight || resolutionState.target.height,
+        { w: window.innerWidth, h: window.innerHeight }
+      );
+    }
+    camera.aspect = currentAspect();
     camera.updateProjectionMatrix();
-    applyPixelRatio();
-    renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
   canvas.addEventListener('webglcontextlost', (e) => {
     e.preventDefault();
-    fatal('The WebGL context was lost. Reload the page to continue.');
+    fatal(
+      `The WebGL context was lost — most likely the ${labelFor(
+        resolutionState.target.width,
+        resolutionState.target.height
+      )} drawing buffer (${resolutionState.target.width}×${resolutionState.target.height}) ` +
+        `could not be kept on this GPU. Reload and choose a lower preset.`
+    );
   });
 
   hud = createHud();
@@ -237,7 +331,10 @@ function boot() {
       speed: speedText,
       quality: presetLabel,
       shadows: CONFIG.graphics.shadows ? 'On' : 'Off',
-      resolution: pixelRatio.toFixed(2),
+      resolution: `${resolutionState.label} · ${resolutionState.target.width}×${resolutionState.target.height}`,
+      buffer: `${resolutionState.applied.actualWidth}×${resolutionState.applied.actualHeight}`,
+      caps: caps.available && caps.maxRenderbuffer ? `GL max ${caps.maxRenderbuffer}` : 'GL max --',
+      note: resolutionState.limitation || (resolutionState.applied.ok ? 'exact' : 'failed'),
       prompt: promptText,
     });
   }

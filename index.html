@@ -118,6 +118,11 @@
     #overlay button:hover { background: #2c3442; }
     #overlay button.active { background: #2f6fc0; border-color: #4f8fd8; color: #fff; }
     #overlay .msg { min-height: 18px; margin: 10px 0 0; color: #ff9b9b; font-size: 13px; }
+    #overlay .res-status {
+      margin: 10px 0 0; font-size: 12px; line-height: 1.5; color: #9fb0c8;
+      border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 10px;
+    }
+    #overlay .res-status.warn { color: #ffcf8f; }
   </style>
 </head>
 <body>
@@ -136,6 +141,7 @@
         <li><kbd>E</kbd> — enter / exit the car (stand next to it)</li>
         <li>While driving: <kbd>W</kbd>/<kbd>S</kbd> throttle &amp; brake, <kbd>A</kbd>/<kbd>D</kbd> steer</li>
         <li><kbd>Esc</kbd> — release the mouse</li>
+        <li>Quality sets a <strong>fixed</strong> internal resolution: Low 8K · Medium 12K · High 20K (GPU-capped — see below).</li>
       </ul>
 
       <p class="section-title">Graphics preset</p>
@@ -147,6 +153,7 @@
       </div>
 
       <p class="msg" id="overlay-message"></p>
+      <p class="res-status" id="res-status"></p>
     </div>
   </div>
 

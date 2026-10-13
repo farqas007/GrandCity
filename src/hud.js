@@ -38,7 +38,10 @@ export function createHud() {
   add('speed', 'Speed');
   add('quality', 'Quality');
   add('shadows', 'Shadows');
-  add('resolution', 'Resolution');
+  add('resolution', 'Target res');
+  add('buffer', 'Draw buffer');
+  add('caps', 'GL cap');
+  add('note', 'Note');
 
   document.body.appendChild(el);
   document.body.appendChild(prompt);
@@ -74,6 +77,9 @@ export function createHud() {
         values.quality.textContent = info.quality;
         values.shadows.textContent = info.shadows;
         values.resolution.textContent = info.resolution;
+        values.buffer.textContent = info.buffer;
+        values.caps.textContent = info.caps;
+        values.note.textContent = info.note;
       }
 
       // Contextual prompt; a transient "flash" message takes priority briefly.

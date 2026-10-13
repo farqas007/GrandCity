@@ -74,6 +74,8 @@ export const PALETTE = {
 // ---------------------------------------------------------------------------
 // Quality presets. Each preset overrides a subset of CONFIG.render and
 // CONFIG.graphics; anything it omits keeps its base value.
+// NOTE (M3.2): resolution is NOT configured here. The visual-detail presets
+// below stay independent of the fixed output resolutions in CONFIG.resolution.
 // ---------------------------------------------------------------------------
 const PRESETS = {
   low: {
@@ -226,6 +228,24 @@ export const CONFIG = {
     anisotropy: 2,
     fogNear: 110,
     fogFar: 400,
+  },
+
+  // ---------------------------------------------------------------------
+  // M3.2 - fixed output resolution. Deliberately SEPARATE from the visual
+  // detail presets: each quality name requests one exact internal drawing
+  // buffer size. These are *requests*; the real buffer is measured back from
+  // WebGL and reported in the HUD / overlay (see src/resolution.js). Nothing
+  // here is auto-lowered for FPS.
+  // ---------------------------------------------------------------------
+  resolution: {
+    targets: {
+      low: [7680, 4320], // 8K
+      medium: [11520, 6480], // 12K
+      high: [19200, 10800], // 20K
+    },
+    // Legacy "?res=<scale>" override range (relative to the window size).
+    customMinScale: 0.4,
+    customMaxScale: 1.5,
   },
 
   graphics: {
