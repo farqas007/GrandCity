@@ -1,28 +1,37 @@
 # GrandCity
 
-An original open-world 3D action game project. **Milestone M1 — "Walk a Block"**
-is a small, playable first-person city prototype built with **vanilla JavaScript
-and Three.js ES modules**. No build step, no framework, no npm dependencies.
+An original open-world 3D action game project. **Milestone M1.1 — "Walk a Block"
+(Graphics Upgrade)** is a small, playable first-person city prototype built with
+**vanilla JavaScript and Three.js ES modules**. No build step, no framework, no
+npm dependencies.
 
-> **Original content only.** The city is generated procedurally at runtime from
-> this repository's own code. Nothing here copies any third-party game's
-> characters, story, map, assets, or branding.
+> **Original content only.** The city, textures, and all geometry are generated
+> procedurally at runtime from this repository's own code. Nothing here copies
+> any third-party game's characters, story, map, assets, or branding.
 
 ---
 
-## What M1 contains
+## What M1.1 contains
 
-- A flat ground plane with a procedural **8×8 block grid** of streets and
-  sidewalk pads.
-- **~200 instanced buildings** (one `InstancedMesh`, per-instance scale + colour).
-- **First-person movement**: WASD / arrow keys, mouse-look via Pointer Lock,
-  Shift to sprint, smooth acceleration.
-- Simple **collision** (axis-aligned building footprints) and world-boundary
-  clamping so you cannot walk off the map.
-- An **FPS / draw-call / triangle / position HUD**.
-- Low-end-friendly rendering: pixel ratio capped at 1 and scaled to 0.75,
-  antialiasing off, **no shadows, no post-processing**, cheap
-  `MeshLambertMaterial`, and distance fog.
+Building on the M1 prototype:
+
+- **Streets & sidewalks:** two-tone sidewalk slabs with a curb lip, plus
+  **road markings** — dashed centre lines and zebra **crosswalks** at
+  intersections.
+- **Detailed buildings:** procedurally generated **facade textures** (window
+  grid + frame + floor lines) tiled per building height tier, **doors** on the
+  street-facing sides, and **rooftop cornices + AC units**.
+- **Street furniture:** instanced **street lamps** (glowing heads), **trees**
+  (including mini-parks on vacant lots) and **bins**, all budget-capped.
+- **Environment:** gradient **sky dome**, horizon-matched **fog**, hemisphere +
+  directional (sun) lighting, and optional **shadows**.
+- **Quality presets:** **Low / Medium / High**, selectable from the start
+  overlay or via URL. They control resolution scale, fog distance, facade tiers,
+  detail toggles and prop budgets.
+- **Configurable resolution** with a sensible default (`0.8`) and a hard safety
+  cap (`1.5`).
+- Preserved from M1: WASD / arrow movement, mouse-look (Pointer Lock), Shift
+  sprint, building collision + world bounds, HUD, and a centre **crosshair**.
 
 ---
 
@@ -55,6 +64,21 @@ Click the page once to capture the mouse (pointer lock). Press `Esc` to release 
 > Why a server instead of opening `index.html` directly? ES modules and import
 > maps require an `http://` origin; `file://` will not work.
 
+### Options (URL query parameters)
+
+| Parameter | Values | Default | Effect |
+| --- | --- | --- | --- |
+| `quality` | `low` \| `medium` \| `high` | `medium` | Selects the graphics preset |
+| `res` | `0.4` – `1.5` | preset value | Resolution scale multiplier |
+| `shadows` | `0` \| `1` | preset value | Force shadows off/on |
+
+Examples: `http://localhost:8000/?quality=low`,
+`http://localhost:8000/?quality=high&shadows=0`,
+`http://localhost:8000/?res=0.6`.
+
+The **Low / Medium / High** and **Shadows** buttons on the start overlay simply
+set these URL parameters and reload.
+
 ---
 
 ## Controls
@@ -68,23 +92,47 @@ Click the page once to capture the mouse (pointer lock). Press `Esc` to release 
 
 ---
 
+## Quality presets
+
+| Setting | Low | Medium (default) | High |
+| --- | --- | --- | --- |
+| Resolution scale | 0.6 | 0.8 | 1.0 |
+| Tone mapping | off | on | on |
+| Anisotropy | 1 | 2 | 4 |
+| Fog far | 300 | 400 | 480 |
+| Facade tiers | 1 | 2 | 3 |
+| Crosswalks | off | on | on |
+| Rooftop details | off | on | on |
+| Shadows | off | off | **on** |
+| Lamp / tree / bin budgets | 48 / 48 / 0 | 110 / 140 / 60 | 180 / 220 / 100 |
+
+Shadows are the most expensive feature; they are **off** except in High, and can
+be toggled independently with `?shadows=`. If they hurt performance, use Low or
+Medium, or add `&shadows=0`.
+
+---
+
 ## Project structure
 
 ```
 GrandCity/
-├── index.html            # page shell, styles, import map, start overlay
+├── index.html              # page shell, styles, import map, start overlay
 ├── .gitignore
 ├── README.md
 ├── src/
-│   ├── config.js         # all render / city / player tunables
-│   ├── main.js           # boot, scene/renderer setup, render loop
-│   ├── controls.js       # first-person controls (Pointer Lock API)
-│   ├── hud.js            # FPS / draw-call / position HUD
+│   ├── config.js           # presets, palette, all render/city/player tunables
+│   ├── main.js             # boot, renderer setup, quality handling, loop
+│   ├── controls.js         # first-person controls (Pointer Lock API)
+│   ├── hud.js              # FPS / draw-call / position / quality HUD
+│   ├── gfx/
+│   │   └── textures.js      # procedural facade + sky canvas textures
 │   └── world/
-│       └── city.js       # procedural instanced city generator
+│       ├── city.js          # procedural city: roads, buildings, collision
+│       ├── environment.js   # sky dome, fog, lights, optional shadows
+│       └── props.js         # street furniture (lamps, trees, bins)
 └── vendor/
-    ├── three.module.js   # pinned Three.js build (see below)
-    └── three.core.js     # required sibling module of three.module.js
+    ├── three.module.js     # pinned Three.js build (see below)
+    └── three.core.js       # required sibling module of three.module.js
 ```
 
 ---
@@ -122,28 +170,35 @@ specifier `three` to the local `vendor/three.module.js`.
 These are **design targets based on the hardware constraints, not measured
 results** (no on-device browser test has been run yet):
 
-- Renderer pixel ratio is clamped to `1` and further scaled by `0.75`, so the
-  framebuffer renders ~56% of the window's pixels and the browser upscales.
-- Antialiasing, shadows and post-processing are disabled.
-- Buildings and sidewalk pads are drawn with `InstancedMesh`, keeping the draw
-  call count low (typically a handful of calls per frame).
-- `MeshLambertMaterial` avoids the cost of PBR shading; fog hides distant
-  geometry and lets the camera keep a short far plane.
+- Geometry stays low-poly and heavily **instanced** (buildings, markings, props).
+  Detail is added mostly through **small textures** rather than triangles.
+- Textures are tiny (a 128×128 facade tile and a 2×256 sky gradient), generated
+  once and shared; only `map` + per-instance tint are used.
+- Antialiasing and post-processing are disabled; `MeshLambertMaterial` and
+  `MeshBasicMaterial` avoid expensive PBR shading.
+- Pixel ratio is clamped and scaled (default 0.8 of the clamped device ratio),
+  with a hard cap of 1.5.
+- Shadows are off by default and, when enabled, use a modest map that follows
+  the player over a limited area.
 
 Target hardware: Intel Celeron N4020, ~1 GB free RAM, software rendering.
-Adjust `src/config.js` (`render.pixelRatio`, `city.grid`, `city.maxHeight`) to
-trade quality for speed.
+Tune via `src/config.js` or the URL parameters.
 
 ---
 
-## Limitations (M1 scope)
+## Limitations
 
 - No audio, no vehicles, no NPCs, no combat, no menus beyond the start overlay.
-- Collision is limited to axis-aligned building boxes plus a rectangular world
-  boundary — no ramps, slopes, or multi-floor interiors.
+- Collision covers building footprints and a rectangular world boundary only;
+  street furniture and trees are not collidable.
+- Windows are baked into the facade texture (not individual lit geometry), so
+  they do not light up individually.
+- Facade window scale is consistent per height tier, not per building, so very
+  small or very tall buildings can stretch slightly.
 - The world is a single fixed-size grid; there is no streaming or LOD yet.
-- **No automated test suite.** Only static syntax checks (`node --check`) have
-  been run; see the repository history / commit message for what was verified.
+- **No automated test suite and no browser/FPS verification has been performed.**
+  Only static syntax / import checks and a headless generation smoke test have
+  been run; see the commit message for what was verified.
 
 ---
 

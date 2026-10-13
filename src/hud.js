@@ -1,6 +1,6 @@
-// GrandCity - lightweight on-screen HUD (M1).
-// Shows FPS, renderer draw-call / triangle counts and player position.
-// Text updates are throttled so this costs almost nothing per frame.
+// GrandCity - lightweight on-screen HUD (M1.1).
+// Shows FPS, renderer draw-call / triangle counts, position, and the active
+// quality settings. Text updates are throttled so this costs almost nothing.
 
 export function createHud() {
   const el = document.createElement('div');
@@ -29,6 +29,9 @@ export function createHud() {
   add('draws', 'Draw calls');
   add('tris', 'Triangles');
   add('pos', 'Position (x, z)');
+  add('quality', 'Quality');
+  add('shadows', 'Shadows');
+  add('resolution', 'Resolution');
 
   document.body.appendChild(el);
 
@@ -55,6 +58,9 @@ export function createHud() {
         values.draws.textContent = String(info.calls);
         values.tris.textContent = info.triangles.toLocaleString();
         values.pos.textContent = info.position;
+        values.quality.textContent = info.quality;
+        values.shadows.textContent = info.shadows;
+        values.resolution.textContent = info.resolution;
       }
     },
 

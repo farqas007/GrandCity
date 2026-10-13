@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-  <title>GrandCity — M1 Walk a Block</title>
+  <title>GrandCity — M1.1 Walk a Block</title>
   <style>
     :root { color-scheme: dark; }
     html, body {
@@ -15,6 +15,23 @@
       color: #e6e9ef;
     }
     #scene { display: block; width: 100%; height: 100%; }
+
+    /* Crosshair */
+    #crosshair {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      width: 6px;
+      height: 6px;
+      margin: -3px 0 0 -3px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.75);
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+      display: none;
+      z-index: 6;
+    }
+    #crosshair.visible { display: block; }
 
     /* HUD */
     #hud {
@@ -48,7 +65,7 @@
     }
     #overlay.hidden { display: none; }
     #overlay .panel {
-      width: min(440px, 86vw);
+      width: min(460px, 88vw);
       padding: 28px 30px;
       background: rgba(16, 20, 28, 0.9);
       border: 1px solid rgba(255, 255, 255, 0.1);
@@ -58,21 +75,39 @@
     #overlay h1 { margin: 0 0 2px; font-size: 30px; letter-spacing: 0.5px; }
     #overlay .sub { margin: 0 0 16px; color: #8b93a7; font-size: 13px; }
     #overlay .cta { margin: 0 0 14px; font-size: 16px; color: #b7e0ff; }
-    #overlay ul { margin: 0; padding-left: 18px; color: #c3cad8; font-size: 13px; line-height: 1.9; }
+    #overlay ul { margin: 0 0 16px; padding-left: 18px; color: #c3cad8; font-size: 13px; line-height: 1.9; }
     #overlay kbd {
       background: #232a36; border: 1px solid #39414f; border-bottom-width: 2px;
       border-radius: 4px; padding: 1px 6px; font-size: 12px;
     }
-    #overlay .msg { min-height: 18px; margin: 14px 0 0; color: #ff9b9b; font-size: 13px; }
+    #overlay .section-title {
+      margin: 0 0 8px; font-size: 11px; letter-spacing: 0.12em;
+      text-transform: uppercase; color: #8b93a7;
+    }
+    #overlay .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    #overlay button {
+      font: inherit;
+      font-size: 13px;
+      color: #cdd5e1;
+      background: #232a36;
+      border: 1px solid #39414f;
+      border-radius: 6px;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+    #overlay button:hover { background: #2c3442; }
+    #overlay button.active { background: #2f6fc0; border-color: #4f8fd8; color: #fff; }
+    #overlay .msg { min-height: 18px; margin: 10px 0 0; color: #ff9b9b; font-size: 13px; }
   </style>
 </head>
 <body>
   <canvas id="scene"></canvas>
+  <div id="crosshair"></div>
 
   <div id="overlay" role="button" tabindex="0" aria-label="Start GrandCity">
     <div class="panel">
       <h1>GrandCity</h1>
-      <p class="sub">M1 · Walk a Block</p>
+      <p class="sub">M1.1 · Walk a Block</p>
       <p class="cta">Click to play</p>
       <ul>
         <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrow keys — move</li>
@@ -80,6 +115,15 @@
         <li><kbd>Shift</kbd> — sprint</li>
         <li><kbd>Esc</kbd> — release the mouse</li>
       </ul>
+
+      <p class="section-title">Graphics preset</p>
+      <div class="controls">
+        <button data-quality="low" type="button">Low</button>
+        <button data-quality="medium" type="button">Medium</button>
+        <button data-quality="high" type="button">High</button>
+        <button data-shadows type="button">Shadows: Off</button>
+      </div>
+
       <p class="msg" id="overlay-message"></p>
     </div>
   </div>
