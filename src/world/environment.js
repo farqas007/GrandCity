@@ -42,10 +42,14 @@ export function createEnvironment(scene, renderer, render, graphics, palette) {
   scene.background = fogColor.clone();
 
   // --- Lights -------------------------------------------------------------
-  const hemi = new THREE.HemisphereLight(palette.hemiSky, palette.hemiGround, 1.05);
+  const hemi = new THREE.HemisphereLight(
+    palette.hemiSky,
+    palette.hemiGround,
+    graphics.hemiIntensity ?? 1.05
+  );
   scene.add(hemi);
 
-  const sun = new THREE.DirectionalLight(palette.sun, 1.5);
+  const sun = new THREE.DirectionalLight(palette.sun, graphics.sunIntensity ?? 1.5);
   sun.position.copy(SUN_OFFSET);
   sun.target.position.set(0, 0, 0);
   scene.add(sun);

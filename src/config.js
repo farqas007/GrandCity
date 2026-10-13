@@ -252,6 +252,10 @@ export const CONFIG = {
     shadows: false,
     shadowMapSize: 1024,
     skyDome: true,
+    // M3.3 lighting intensities. Defaults preserve the existing look; presets
+    // inherit them (no preset overrides these in Stage 2).
+    hemiIntensity: 1.05,
+    sunIntensity: 1.5,
     facadeTiers: 2,
     doors: true,
     roadMarkings: true,
