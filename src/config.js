@@ -45,6 +45,16 @@ export const PALETTE = {
   trunk: 0x4a3b2a,
   foliage: [0x4e7a3a, 0x5f8a44, 0x3f6b34, 0x6b9a4f],
   bin: 0x3a4046,
+
+  // Vehicle colours.
+  carBody: 0xc23b3b,
+  carBodyDark: 0x7d2626,
+  carGlass: 0x22303c,
+  carTrim: 0x2a2f36,
+  carTire: 0x1a1c1f,
+  carHub: 0x9aa0a6,
+  carHeadlight: 0xfff6d0,
+  carTaillight: 0xd83a2a,
 };
 
 // ---------------------------------------------------------------------------
@@ -213,6 +223,55 @@ export const CONFIG = {
     pitchLimit: Math.PI / 2 - 0.05,
     collisionRadius: 0.6,
     margin: 4, // keep the player this far inside the outer world bound
+  },
+
+  // ---------------------------------------------------------------------
+  // M2 - vehicle / driving system. Arcade-style, tuned to feel responsive
+  // while staying cheap enough for the low-end target machine.
+  // ---------------------------------------------------------------------
+  vehicle: {
+    // XZ distance the player must be within to press E and enter.
+    enterRadius: 4.5,
+    // Where the car is parked when the world starts (on the road at x = 0).
+    spawn: { x: 0, z: -14, heading: 0 },
+
+    // Longitudinal motion (metres / second, seconds).
+    maxSpeed: 24, // ~86 km/h forward
+    maxReverse: 8,
+    accel: 9, // throttle acceleration
+    brake: 24, // S / Down while moving forward
+    rollFriction: 5, // coasting deceleration with no input
+
+    // Steering. Turning is speed-dependent: nearly stationary cars barely turn,
+    // and the yaw rate eases off slightly at top speed for stability.
+    steerRate: 6, // how quickly steering input ramps in (1 / second)
+    turnRate: 1.7, // max yaw rate at the reference speed (radians / second)
+    turnSpeedRef: 7, // speed at which full steering grip is available
+    maxSteerAngle: 0.5, // visual front-wheel angle (radians)
+
+    // Collision: the car is approximated by two circles (front + rear) so it
+    // cannot be driven through building footprints.
+    collisionRadius: 1.0,
+    sampleOffset: 1.3,
+
+    // How quickly the car settles onto the road / sidewalk height.
+    groundLerp: 10,
+
+    // Chase camera while driving.
+    camera: {
+      back: 8.5, // metres behind the car
+      up: 3.6,
+      lookAhead: 5, // aim this far ahead of the car
+      lookUp: 1.2,
+      posLerp: 6, // position smoothing rate
+    },
+
+    // Mouse look-around offset (relative to the car's heading).
+    orbit: {
+      sensitivity: 0.0025,
+      recenter: 1.5, // rate the offset eases back to centred
+      maxYaw: 2.2, // radians
+    },
   },
 };
 

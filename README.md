@@ -1,13 +1,38 @@
 # GrandCity
 
-An original open-world 3D action game project. **Milestone M1.1 — "Walk a Block"
-(Graphics Upgrade)** is a small, playable first-person city prototype built with
-**vanilla JavaScript and Three.js ES modules**. No build step, no framework, no
+An original open-world 3D action game project. **Milestone M2 — "Walk & Drive"**
+is a small, playable third-person/first-person city prototype built with
+**vanilla JavaScript and Three.js ES modules**. It builds on the M1.1 graphics
+upgrade by adding a drivable procedural car. No build step, no framework, no
 npm dependencies.
 
 > **Original content only.** The city, textures, and all geometry are generated
 > procedurally at runtime from this repository's own code. Nothing here copies
 > any third-party game's characters, story, map, assets, or branding.
+
+---
+
+## What M2 adds (Walk & Drive)
+
+- A **procedurally built car** (boxy body, cabin, glass, lights, four wheels) —
+  roughly 500 triangles, generated from primitives with no external assets.
+- **Enter / exit** with `E`: walk up to the car (within a few metres) and press
+  `E` to get in; press `E` again to step out beside it. The proximity check means
+  the car can never be entered by accident from across the street.
+- **Driving:** `W`/`Up` accelerates, `S`/`Down` brakes then reverses, `A`/`D`
+  (or `Left`/`Right`) steer. Acceleration, braking, coasting and steering are all
+  smoothed, and the car has a capped top speed (~86 km/h) and reverse speed.
+- **Speed-dependent steering** (barely turns when nearly stopped, stable at top
+  speed) and a **chase camera** that follows the car; the mouse can look around
+  and the view eases back to centre. The normal first-person camera is restored
+  on exit.
+- **Collision** against building footprints using a lightweight two-circle
+  ("capsule") test reusing the same collision data as the walking player, plus
+  the world boundary. The car also follows the road / sidewalk height over kerbs.
+- **HUD** now shows `Mode` and driving `Speed` (km/h), plus a contextual prompt
+  ("Press E to enter the car" / driving controls).
+- Preserved from M1.1: walking, the city, quality presets, resolution settings,
+  shadows, and the FPS / debug HUD.
 
 ---
 
@@ -85,10 +110,16 @@ set these URL parameters and reload.
 
 | Input | Action |
 | --- | --- |
-| `W` `A` `S` `D` / arrow keys | Move |
+| `W` `A` `S` `D` / arrow keys | Walk (move) |
 | Mouse | Look |
 | `Shift` | Sprint |
+| `E` | Enter / exit the car (must be standing next to it) |
 | `Esc` | Release the mouse |
+
+While **driving**, the same keys change meaning: `W`/`Up` throttle, `S`/`Down`
+brake/reverse, `A`/`D` (or `Left`/`Right`) steer, and the mouse looks around the
+car (the view eases back behind the car when the mouse stops). Press `E` to get
+out; the car is left parked and the first-person camera returns.
 
 ---
 
@@ -123,7 +154,8 @@ GrandCity/
 │   ├── config.js           # presets, palette, all render/city/player tunables
 │   ├── main.js             # boot, renderer setup, quality handling, loop
 │   ├── controls.js         # first-person controls (Pointer Lock API)
-│   ├── hud.js              # FPS / draw-call / position / quality HUD
+│   ├── vehicle.js          # M2: procedural car + driving controller (physics, chase cam)
+│   ├── hud.js              # FPS / draw-call / position / quality / mode / speed HUD
 │   ├── gfx/
 │   │   └── textures.js      # procedural facade + sky canvas textures
 │   └── world/
@@ -188,7 +220,12 @@ Tune via `src/config.js` or the URL parameters.
 
 ## Limitations
 
-- No audio, no vehicles, no NPCs, no combat, no menus beyond the start overlay.
+- No audio, no NPCs, no combat, no menus beyond the start overlay.
+- **One** drivable car (no traffic system); cars are not collidable while walking
+  (you can walk through the parked car), and the car itself is blocked by
+  buildings/bounds but not by street furniture, trees or other props.
+- Car collision approximates the body with two circles, so it can clip a corner
+  very slightly at speed; it cannot pass through buildings.
 - Collision covers building footprints and a rectangular world boundary only;
   street furniture and trees are not collidable.
 - Windows are baked into the facade texture (not individual lit geometry), so
@@ -197,8 +234,9 @@ Tune via `src/config.js` or the URL parameters.
   small or very tall buildings can stretch slightly.
 - The world is a single fixed-size grid; there is no streaming or LOD yet.
 - **No automated test suite and no browser/FPS verification has been performed.**
-  Only static syntax / import checks and a headless generation smoke test have
-  been run; see the commit message for what was verified.
+  Only static syntax / import checks, HTTP asset checks and headless
+  generation/vehicle smoke tests have been run; see the commit message for what
+  was verified.
 
 ---
 

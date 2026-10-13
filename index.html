@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-  <title>GrandCity — M1.1 Walk a Block</title>
+  <title>GrandCity — M2 Walk &amp; Drive</title>
   <style>
     :root { color-scheme: dark; }
     html, body {
@@ -32,6 +32,26 @@
       z-index: 6;
     }
     #crosshair.visible { display: block; }
+
+    /* Contextual prompt (enter / exit car, driving controls) */
+    #prompt {
+      position: fixed;
+      left: 50%;
+      bottom: 60px;
+      transform: translateX(-50%);
+      padding: 8px 14px;
+      background: rgba(10, 13, 18, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      color: #dfe6f2;
+      pointer-events: none;
+      user-select: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      z-index: 6;
+    }
+    #prompt.visible { opacity: 1; }
 
     /* HUD */
     #hud {
@@ -107,12 +127,14 @@
   <div id="overlay" role="button" tabindex="0" aria-label="Start GrandCity">
     <div class="panel">
       <h1>GrandCity</h1>
-      <p class="sub">M1.1 · Walk a Block</p>
+      <p class="sub">M2 · Walk &amp; Drive</p>
       <p class="cta">Click to play</p>
       <ul>
         <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrow keys — move</li>
         <li>Mouse — look around</li>
         <li><kbd>Shift</kbd> — sprint</li>
+        <li><kbd>E</kbd> — enter / exit the car (stand next to it)</li>
+        <li>While driving: <kbd>W</kbd>/<kbd>S</kbd> throttle &amp; brake, <kbd>A</kbd>/<kbd>D</kbd> steer</li>
         <li><kbd>Esc</kbd> — release the mouse</li>
       </ul>
 

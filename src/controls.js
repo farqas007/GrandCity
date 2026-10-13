@@ -18,6 +18,9 @@ export class FirstPersonControls {
     this.keys = new Set();
     this.locked = false;
     this.onLockChange = null;
+    // When false the mouse no longer drives the first-person view. The driving
+    // system switches this off so the chase camera owns the mouse instead.
+    this.lookEnabled = true;
 
     // Scratch vectors (reused every frame).
     this._forward = new THREE.Vector3();
@@ -65,7 +68,7 @@ export class FirstPersonControls {
   }
 
   _onMouseMove(e) {
-    if (!this.locked) return;
+    if (!this.locked || !this.lookEnabled) return;
     const sens = this.config.lookSensitivity;
     this.yaw -= e.movementX * sens;
     this.pitch -= e.movementY * sens;

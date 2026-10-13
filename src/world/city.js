@@ -404,12 +404,28 @@ export function createCity(scene, renderer) {
     return hit;
   }
 
+  // Height of the drivable / walkable surface at (x, z): the sidewalk slab when
+  // the point sits on top of a block, otherwise the road. The city is a regular
+  // grid, so this is a cheap O(1) lookup (used by the vehicle to ride kerbs).
+  function groundHeightAt(x, z) {
+    const gx = Math.round(x / pitch + (c.grid - 1) / 2);
+    const gz = Math.round(z / pitch + (c.grid - 1) / 2);
+    if (gx >= 0 && gx < c.grid && gz >= 0 && gz < c.grid) {
+      const bx = blockCenter(gx);
+      const bz = blockCenter(gz);
+      const halfPad = c.blockSize / 2 + 0.5; // matches the curb slab size
+      if (Math.abs(x - bx) <= halfPad && Math.abs(z - bz) <= halfPad) return walkTop;
+    }
+    return groundY;
+  }
+
   return {
     group,
     bounds,
     buildingCount: layout.length,
     propCounts: props.counts,
     resolveCollision,
+    groundHeightAt,
   };
 }
 

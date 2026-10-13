@@ -1,12 +1,14 @@
-// GrandCity - M1.1 entry point.
-// Wires the renderer, environment, city and controls together and runs the
-// render loop. Kept deliberately small and dependency-free (Three.js only).
+// GrandCity - M2 entry point.
+// Wires the renderer, environment, city, walking controls and the driving
+// system together and runs the render loop. Kept deliberately small and
+// dependency-free (Three.js only).
 
 import * as THREE from 'three';
 import { CONFIG, PALETTE, applyQuality } from './config.js';
 import { createEnvironment } from './world/environment.js';
 import { createCity } from './world/city.js';
 import { FirstPersonControls } from './controls.js';
+import { createVehicle, CarController } from './vehicle.js';
 import { createHud } from './hud.js';
 
 const canvas = document.getElementById('scene');
@@ -119,6 +121,49 @@ function boot() {
     if (e.code === 'Enter' || e.code === 'Space') controls.requestLock();
   });
 
+  // --- M2: drivable car ---------------------------------------------------
+  const vehicle = createVehicle(scene);
+  const car = new CarController(vehicle, world);
+  let mode = 'walk';
+
+  function enterCar() {
+    mode = 'drive';
+    car.driving = true;
+    car.setSpeed(0);
+    car.lookYaw = 0;
+    controls.lookEnabled = false;
+    controls.keys.clear();
+    controls.velocity.set(0, 0, 0);
+    showOverlayMessage('');
+  }
+
+  function exitCar() {
+    const p = car.getExitPosition();
+    camera.position.set(p.x, CONFIG.player.eyeHeight, p.z);
+    controls.yaw = car.heading;
+    controls.pitch = 0;
+    camera.rotation.set(0, controls.yaw, 0);
+    controls.velocity.set(0, 0, 0);
+    controls.keys.clear();
+    controls.lookEnabled = true;
+    car.driving = false;
+    car.setSpeed(0);
+    mode = 'walk';
+  }
+
+  // E enters the car only when the player is standing next to it, so a car can
+  // never be entered by accident from across the street.
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'KeyE' || e.repeat) return;
+    if (mode === 'walk') {
+      const d = car.distanceTo(camera.position.x, camera.position.z);
+      if (d <= CONFIG.vehicle.enterRadius) enterCar();
+      else if (hud) hud.flash('Walk closer to the car to get in', 1.5);
+    } else {
+      exitCar();
+    }
+  });
+
   // Quality / shadows controls on the start overlay.
   document.querySelectorAll('[data-quality]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.quality === activeQuality);
@@ -158,7 +203,27 @@ function boot() {
     requestAnimationFrame(animate);
 
     const dt = Math.min(clock.getDelta(), CONFIG.render.maxDelta);
-    controls.update(dt);
+
+    let speedText = '--';
+    let promptText = '';
+
+    if (mode === 'drive') {
+      const k = controls.keys;
+      const throttle =
+        (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) -
+        (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
+      const steer =
+        (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0) -
+        (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0);
+      car.update(dt, { throttle, steer }, camera);
+      speedText = `${car.getSpeedKmh().toFixed(0)} km/h`;
+      promptText = 'W/S drive · A/D steer · Mouse look · E exit';
+    } else {
+      controls.update(dt);
+      const d = car.distanceTo(camera.position.x, camera.position.z);
+      if (d <= CONFIG.vehicle.enterRadius) promptText = 'Press E to enter the car';
+    }
+
     env.update(camera);
 
     renderer.render(scene, camera);
@@ -168,9 +233,12 @@ function boot() {
       calls: renderer.info.render.calls,
       triangles: renderer.info.render.triangles,
       position: positionText,
+      mode: mode === 'drive' ? 'Driving' : 'Walking',
+      speed: speedText,
       quality: presetLabel,
       shadows: CONFIG.graphics.shadows ? 'On' : 'Off',
       resolution: pixelRatio.toFixed(2),
+      prompt: promptText,
     });
   }
 
