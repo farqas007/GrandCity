@@ -55,6 +55,20 @@ export const PALETTE = {
   carHub: 0x9aa0a6,
   carHeadlight: 0xfff6d0,
   carTaillight: 0xd83a2a,
+
+  // M3.1 detail colours.
+  shopGlass: 0x35424f,
+  shopFrame: 0x58524b,
+  awning: 0xa83a2f, // baked shopfront awning stripes
+  balcony: 0xa9b0b8,
+  balconyRail: 0x565d66,
+  roofTank: 0x6e747b,
+  antenna: 0x454a51,
+  bench: 0x6b5238,
+  benchBack: 0x5a442e,
+  pavingJoint: '#5f6368',
+  asphaltLight: '#34383f',
+  asphaltDark: '#22252b',
 };
 
 // ---------------------------------------------------------------------------
@@ -88,6 +102,17 @@ const PRESETS = {
       treeBudget: 48,
       binBudget: 0,
       acBudget: 0,
+      // M3.1 detail flags: Low keeps the exact M1/M2 look.
+      facadeVariants: false,
+      shopfronts: false,
+      balconies: false,
+      balconyBudget: 0,
+      roofExtras: false,
+      roadTextures: false,
+      edgeLines: false,
+      stopBars: false,
+      detailedProps: false,
+      benchBudget: 0,
     },
   },
 
@@ -117,6 +142,17 @@ const PRESETS = {
       treeBudget: 140,
       binBudget: 60,
       acBudget: 120,
+      // M3.1 detail flags (Medium): balanced detail, still hardware-friendly.
+      facadeVariants: true,
+      shopfronts: true,
+      balconies: true,
+      balconyBudget: 130,
+      roofExtras: true,
+      roadTextures: true,
+      edgeLines: true,
+      stopBars: true,
+      detailedProps: true,
+      benchBudget: 40,
     },
   },
 
@@ -148,6 +184,17 @@ const PRESETS = {
       treeBudget: 220,
       binBudget: 100,
       acBudget: 220,
+      // M3.1 detail flags (High): maximum practical M3.1 detail.
+      facadeVariants: true,
+      shopfronts: true,
+      balconies: true,
+      balconyBudget: 240,
+      roofExtras: true,
+      roadTextures: true,
+      edgeLines: true,
+      stopBars: true,
+      detailedProps: true,
+      benchBudget: 90,
     },
   },
 };
@@ -194,6 +241,17 @@ export const CONFIG = {
     treeBudget: 140,
     binBudget: 60,
     acBudget: 120,
+    // M3.1 detail flags (defaults = Medium values; Low explicitly disables).
+    facadeVariants: true,
+    shopfronts: true,
+    balconies: true,
+    balconyBudget: 130,
+    roofExtras: true,
+    roadTextures: true,
+    edgeLines: true,
+    stopBars: true,
+    detailedProps: true,
+    benchBudget: 40,
   },
 
   city: {

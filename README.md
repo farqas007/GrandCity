@@ -1,14 +1,42 @@
 # GrandCity
 
-An original open-world 3D action game project. **Milestone M2 — "Walk & Drive"**
+An original open-world 3D action game project. **Milestone M3 — "Detailed City"**
 is a small, playable third-person/first-person city prototype built with
-**vanilla JavaScript and Three.js ES modules**. It builds on the M1.1 graphics
-upgrade by adding a drivable procedural car. No build step, no framework, no
-npm dependencies.
+**vanilla JavaScript and Three.js ES modules**. It builds on the M1.1 and M2
+milestones (detailed city + drivable car) by pushing the procedural detail much
+further. No build step, no framework, no npm dependencies.
 
 > **Original content only.** The city, textures, and all geometry are generated
 > procedurally at runtime from this repository's own code. Nothing here copies
 > any third-party game's characters, story, map, assets, or branding.
+
+---
+
+## What M3.1 adds (Detailed City)
+
+All new detail is behind new quality-preset flags, and **Low keeps the exact
+M1/M1.1 look** (its output is unchanged). The city layout, collision
+footprints and world API are fully preserved — walking and driving behave
+exactly as in M2.
+
+- **Facade variants:** every building gets a deterministic per-position variant
+  — office (glass grid, strong mullions) or residential (brick courses, smaller
+  curtained windows) — chosen without touching the layout's PRNG stream, so the
+  same city loads every time.
+- **Ground-floor shopfronts:** instanced textured bands (display glass, a door,
+  striped awning) pushed onto the street-facing facade of selected lots.
+- **Balconies:** protruding slabs with front rails on a budget-capped subset of
+  taller buildings, placed above the shop band.
+- **Rooftop extras:** instanced water tanks and radio antennas alongside the
+  existing cornices and AC units.
+- **Better roads:** procedural **asphalt** grain and **paving-slab** sidewalk
+  textures, continuous **kerb edge lines** on every road, and **stop bars** in
+  front of each crosswalk.
+- **Better furniture:** lamps gained an arm, a hanging lantern and a cap;
+  trees now use a two-layer canopy; new **benches** appear along sidewalks.
+- Preserved from M2: walk/drive modes, enter/exit with `E`, driving physics and
+  collision, chase camera, HUD (now with the new detail budgets), resolution,
+  shadows and the three quality presets.
 
 ---
 
@@ -131,11 +159,20 @@ out; the car is left parked and the first-person camera returns.
 | Tone mapping | off | on | on |
 | Anisotropy | 1 | 2 | 4 |
 | Fog far | 300 | 400 | 480 |
-| Facade tiers | 1 | 2 | 3 |
+| Facility tiers | 1 | 2 | 3 |
 | Crosswalks | off | on | on |
 | Rooftop details | off | on | on |
 | Shadows | off | off | **on** |
 | Lamp / tree / bin budgets | 48 / 48 / 0 | 110 / 140 / 60 | 180 / 220 / 100 |
+| **M3.1** | | | |
+| Facade variants | off | on | on |
+| Shopfronts | off | on | on |
+| Balcony budget | 0 | 130 | 240 |
+| Roof extras (tanks / antennas) | off | on | on |
+| Road textures (asphalt / pavement) | off | on | on |
+| Edge lines / stop bars | off | on | on |
+| Bench budget | 0 | 40 | 90 |
+| Detailed props (lamp arm, twin canopy) | off | on | on |
 
 Shadows are the most expensive feature; they are **off** except in High, and can
 be toggled independently with `?shadows=`. If they hurt performance, use Low or
@@ -157,11 +194,11 @@ GrandCity/
 │   ├── vehicle.js          # M2: procedural car + driving controller (physics, chase cam)
 │   ├── hud.js              # FPS / draw-call / position / quality / mode / speed HUD
 │   ├── gfx/
-│   │   └── textures.js      # procedural facade + sky canvas textures
+│   │   └── textures.js      # procedural canvas textures: facade variants, shopfronts, asphalt, pavement, sky
 │   └── world/
-│       ├── city.js          # procedural city: roads, buildings, collision
+│       ├── city.js          # procedural city: roads, buildings, collision (M3.1 detail)
 │       ├── environment.js   # sky dome, fog, lights, optional shadows
-│       └── props.js         # street furniture (lamps, trees, bins)
+│       └── props.js         # street furniture (lamps, trees, bins, benches)
 └── vendor/
     ├── three.module.js     # pinned Three.js build (see below)
     └── three.core.js       # required sibling module of three.module.js
@@ -232,7 +269,13 @@ Tune via `src/config.js` or the URL parameters.
   they do not light up individually.
 - Facade window scale is consistent per height tier, not per building, so very
   small or very tall buildings can stretch slightly.
-- The world is a single fixed-size grid; there is no streaming or LOD yet.
+- The world is a single fixed-size grid; **LOD / distance culling and the 8K
+  (7680×4320) render foundations are planned for M3.2**, along with an optional
+  "Ultra" preset. Until then every instanced mesh is always drawn and all three
+  presets (including the new M3.1 detail) share the M1 resolution cap.
+- New M3.1 visuals (shopfront bands, balconies) sit just outside building
+  footprints and are **not collidable**; collision continues to use the building
+  footprint AABBs only, exactly as in M1/M2.
 - **No automated test suite and no browser/FPS verification has been performed.**
   Only static syntax / import checks, HTTP asset checks and headless
   generation/vehicle smoke tests have been run; see the commit message for what

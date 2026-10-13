@@ -1,11 +1,19 @@
-// GrandCity - procedural city generator (M1.1).
-// Layout and collision maths are unchanged from M1; the visuals were upgraded
-// with two-tone sidewalks, road markings, textured tiered buildings, doors and
-// rooftop details. Everything is original, generated at runtime.
+// GrandCity - procedural city generator (M3.1).
+// Layout and collision maths are unchanged from M1; M3.1 adds higher detail
+// behind new preset flags while Low keeps the exact M1/M1.1 look: facade
+// variants, ground-floor shopfront bands, balconies, rooftop extras, textured
+// asphalt/pavement, edge lines and stop bars. Everything is original and
+// generated at runtime.
 
 import * as THREE from 'three';
 import { CONFIG, PALETTE } from '../config.js';
-import { createFacadeTexture } from '../gfx/textures.js';
+import {
+  createFacadeTexture,
+  createVariantFacadeTexture,
+  createShopfrontTexture,
+  createAsphaltTexture,
+  createPavementTexture,
+} from '../gfx/textures.js';
 import { createProps } from './props.js';
 
 // Small deterministic PRNG (mulberry32). Same seed -> same city every load.
@@ -20,6 +28,26 @@ function mulberry32(seed) {
   };
 }
 
+// Deterministic per-position hash -> [0, 1). Used for detail selection so the
+// shared PRNG stream (which drives the world layout) is never disturbed: the
+// same city geometry loads every time, regardless of M3.x flags.
+export function hash01(x, z, salt) {
+  let h =
+    (Math.imul(x | 0, 374761393) +
+      Math.imul(z | 0, 668265263) +
+      Math.imul(salt | 0, 1440662683)) |
+    0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) | 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 4294967296;
+}
+
+// M3.1 building detail metrics.
+const SHOP_H = 3.4; // ground-floor shopfront band height
+const SHOP_THICK = 0.4;
+const BALCONY_DEPTH = 0.55;
+const AXIS_Y = new THREE.Vector3(0, 1, 0);
+
 export function createCity(scene, renderer) {
   const c = CONFIG.city;
   const g = CONFIG.graphics;
@@ -29,6 +57,10 @@ export function createCity(scene, renderer) {
   const groundY = -c.curbHeight; // road surface height
   const walkTop = c.walkTop; // sidewalk surface height (buildings sit here)
   const rand = mulberry32(c.seed);
+  const maxAniso = Math.min(
+    g.shadows ? 4 : CONFIG.render.anisotropy,
+    renderer ? renderer.capabilities.getMaxAnisotropy() : 1
+  );
 
   const group = new THREE.Group();
   group.name = 'city';
@@ -42,13 +74,15 @@ export function createCity(scene, renderer) {
 
   const blockCenter = (i) => (i - (c.grid - 1) / 2) * pitch;
 
-  // Build an InstancedMesh from {x,y,z,sx,sy,sz,color?} items.
+  // Build an InstancedMesh from {x,y,z,sx,sy,sz,ry?,color?} items.
   function buildInstanced(geometry, material, items, useColor) {
     const mesh = new THREE.InstancedMesh(geometry, material, items.length);
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       p.set(it.x, it.y || 0, it.z);
       s.set(it.sx || 1, it.sy || 1, it.sz || 1);
+      if (it.ry) quat.setFromAxisAngle(AXIS_Y, it.ry);
+      else quat.identity();
       m4.compose(p, quat, s);
       mesh.setMatrixAt(i, m4);
       if (useColor && it.color !== undefined) {
@@ -62,9 +96,18 @@ export function createCity(scene, renderer) {
   }
 
   // --- Ground / road base -------------------------------------------------
+  let groundMat;
+  if (g.roadTextures) {
+    const tex = createAsphaltTexture(PALETTE);
+    tex.anisotropy = maxAniso;
+    tex.repeat.set(Math.round(extent / 4), Math.round(extent / 4));
+    groundMat = new THREE.MeshLambertMaterial({ map: tex });
+  } else {
+    groundMat = new THREE.MeshLambertMaterial({ color: PALETTE.asphalt });
+  }
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(extent * 2, extent * 2),
-    new THREE.MeshLambertMaterial({ color: PALETTE.asphalt })
+    groundMat
   );
   ground.name = 'ground';
   ground.rotation.x = -Math.PI / 2;
@@ -84,11 +127,16 @@ export function createCity(scene, renderer) {
   curbs.name = 'curbs';
 
   const walkGeo = new THREE.BoxGeometry(c.blockSize - 0.2, c.walkThickness, c.blockSize - 0.2);
-  const walks = new THREE.InstancedMesh(
-    walkGeo,
-    new THREE.MeshLambertMaterial({ color: PALETTE.sidewalk }),
-    padCount
-  );
+  let walkMat;
+  if (g.roadTextures) {
+    const pTex = createPavementTexture(PALETTE);
+    pTex.anisotropy = maxAniso;
+    pTex.repeat.set(10, 10); // ~4 m slabs per face
+    walkMat = new THREE.MeshLambertMaterial({ map: pTex });
+  } else {
+    walkMat = new THREE.MeshLambertMaterial({ color: PALETTE.sidewalk });
+  }
+  const walks = new THREE.InstancedMesh(walkGeo, walkMat, padCount);
   walks.name = 'sidewalks';
 
   let padIndex = 0;
@@ -141,9 +189,22 @@ export function createCity(scene, renderer) {
         for (let b = 0; b < roadCenters.length; b++) {
           const rx = roadCenters[a];
           const rz = roadCenters[b];
-          addCrosswalk(marks, rx, rz, 1, 0, c, groundY); // +/- X arms
-          addCrosswalk(marks, rx, rz, 0, 1, c, groundY); // +/- Z arms
+          addCrosswalk(marks, rx, rz, 1, 0, c, groundY, g.stopBars); // +/- X arms
+          addCrosswalk(marks, rx, rz, 0, 1, c, groundY, g.stopBars); // +/- Z arms
         }
+      }
+    }
+
+    // Solid edge lines along both kerbs of every road corridor.
+    if (g.edgeLines) {
+      const edgeOff = c.roadWidth / 2 - 0.4;
+      const ln = extent; // whole corridor length, box centred at the middle
+      for (let r = 0; r < roadCenters.length; r++) {
+        const rc = roadCenters[r];
+        marks.push({ x: 0, y, z: rc - edgeOff, sx: ln, sy: 0.02, sz: c.markWidth });
+        marks.push({ x: 0, y, z: rc + edgeOff, sx: ln, sy: 0.02, sz: c.markWidth });
+        marks.push({ x: rc - edgeOff, y, z: 0, sx: c.markWidth, sy: 0.02, sz: ln });
+        marks.push({ x: rc + edgeOff, y, z: 0, sx: c.markWidth, sy: 0.02, sz: ln });
       }
     }
 
@@ -205,59 +266,134 @@ export function createCity(scene, renderer) {
     }
   }
 
-  // Group buildings by height into up to `facadeTiers` instanced meshes so the
-  // facade texture can be tiled at a consistent window scale per tier.
-  const sorted = layout.slice().sort((a, b) => a.h - b.h);
-  const tierCount = Math.max(1, Math.min(g.facadeTiers || 1, 3));
-  const baseTex = createFacadeTexture(PALETTE);
-  baseTex.anisotropy = Math.min(
-    g.shadows ? 4 : CONFIG.render.anisotropy,
-    renderer ? renderer.capabilities.getMaxAnisotropy() : 1
-  );
+  // --- Building bodies ---------------------------------------------------
+  // Detail features are chosen with a per-position hash (never the shared
+  // PRNG), so the exact city layout is identical regardless of M3 flags.
+  const features = [];
+  for (let i = 0; i < layout.length; i++) {
+    const b = layout[i];
+    features.push({
+      variant: hash01(b.x, b.z, 7) < 0.5 ? 'office' : 'residential',
+      shop: hash01(b.x, b.z, 13) < 0.75,
+      balconies: b.h >= 11 && hash01(b.x, b.z, 17) < 0.6,
+      tank: b.h >= 15 && hash01(b.x, b.z, 23) < 0.45,
+      antenna: b.h >= 26 && hash01(b.x, b.z, 29) < 0.4,
+    });
+  }
 
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
   const aabbs = [];
 
-  for (let t = 0; t < tierCount; t++) {
-    const start = Math.floor((t * sorted.length) / tierCount);
-    const end = Math.floor(((t + 1) * sorted.length) / tierCount);
-    const slice = sorted.slice(start, end);
-    if (!slice.length) continue;
+  if (g.facadeVariants) {
+    const tiles = {
+      office: createVariantFacadeTexture(PALETTE, 'office'),
+      residential: createVariantFacadeTexture(PALETTE, 'residential'),
+    };
+    tiles.office.anisotropy = maxAniso;
+    tiles.residential.anisotropy = maxAniso;
 
-    // Representative size for this tier -> window tiling.
-    let avgW = 0;
-    let avgH = 0;
-    for (let i = 0; i < slice.length; i++) {
-      avgW += slice[i].w;
-      avgH += slice[i].h;
+    // Group each variant by height into `facadeTiers` instanced meshes so the
+    // facade texture tiles at a consistent window scale per tier.
+    for (const v of ['office', 'residential']) {
+      const subset = [];
+      for (let i = 0; i < layout.length; i++) {
+        if (features[i].variant === v) subset.push(layout[i]);
+      }
+      if (!subset.length) continue;
+      subset.sort((a, b) => a.h - b.h);
+
+      const tiers = Math.max(1, Math.min(g.facadeTiers || 1, 3));
+      for (let t = 0; t < tiers; t++) {
+        const start = Math.floor((t * subset.length) / tiers);
+        const end = Math.floor(((t + 1) * subset.length) / tiers);
+        const slice = subset.slice(start, end);
+        if (!slice.length) continue;
+
+        // Representative size for this variant + tier -> window tiling.
+        let avgW = 0;
+        let avgH = 0;
+        for (let i = 0; i < slice.length; i++) {
+          avgW += slice[i].w;
+          avgH += slice[i].h;
+        }
+        avgW /= slice.length;
+        avgH /= slice.length;
+        const bays = Math.max(2, Math.round(avgW / c.bayWidth));
+        const floors = Math.max(2, Math.round(avgH / c.floorHeight));
+
+        const tex = tiles[v].clone();
+        tex.needsUpdate = true;
+        tex.repeat.set(bays, floors);
+
+        const mat = new THREE.MeshLambertMaterial({ map: tex });
+        const mesh = new THREE.InstancedMesh(boxGeo, mat, slice.length);
+        mesh.name = 'buildings_' + v + '_' + t;
+
+        for (let i = 0; i < slice.length; i++) {
+          const b = slice[i];
+          p.set(b.x, walkTop + b.h / 2, b.z);
+          s.set(b.w, b.h, b.d);
+          quat.identity();
+          m4.compose(p, quat, s);
+          mesh.setMatrixAt(i, m4);
+          col.set(PALETTE.wallTints[(start + i) % PALETTE.wallTints.length]);
+          mesh.setColorAt(i, col);
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        mesh.castShadow = g.shadows;
+        mesh.receiveShadow = g.shadows;
+        group.add(mesh);
+      }
     }
-    avgW /= slice.length;
-    avgH /= slice.length;
-    const bays = Math.max(2, Math.round(avgW / c.bayWidth));
-    const floors = Math.max(2, Math.round(avgH / c.floorHeight));
+  } else {
+    // Legacy single-tile path. Low preset keeps the exact M1/M1.1 look.
+    const sorted = layout.slice().sort((a, b) => a.h - b.h);
+    const tierCount = Math.max(1, Math.min(g.facadeTiers || 1, 3));
+    const baseTex = createFacadeTexture(PALETTE);
+    baseTex.anisotropy = maxAniso;
 
-    const tex = baseTex.clone();
-    tex.needsUpdate = true;
-    tex.repeat.set(bays, floors);
+    for (let t = 0; t < tierCount; t++) {
+      const start = Math.floor((t * sorted.length) / tierCount);
+      const end = Math.floor(((t + 1) * sorted.length) / tierCount);
+      const slice = sorted.slice(start, end);
+      if (!slice.length) continue;
 
-    const mat = new THREE.MeshLambertMaterial({ map: tex });
-    const mesh = new THREE.InstancedMesh(boxGeo, mat, slice.length);
-    mesh.name = 'buildings_' + t;
+      let avgW = 0;
+      let avgH = 0;
+      for (let i = 0; i < slice.length; i++) {
+        avgW += slice[i].w;
+        avgH += slice[i].h;
+      }
+      avgW /= slice.length;
+      avgH /= slice.length;
+      const bays = Math.max(2, Math.round(avgW / c.bayWidth));
+      const floors = Math.max(2, Math.round(avgH / c.floorHeight));
 
-    for (let i = 0; i < slice.length; i++) {
-      const b = slice[i];
-      p.set(b.x, walkTop + b.h / 2, b.z);
-      s.set(b.w, b.h, b.d);
-      m4.compose(p, quat, s);
-      mesh.setMatrixAt(i, m4);
-      col.set(PALETTE.wallTints[(start + i) % PALETTE.wallTints.length]);
-      mesh.setColorAt(i, col);
+      const tex = baseTex.clone();
+      tex.needsUpdate = true;
+      tex.repeat.set(bays, floors);
+
+      const mat = new THREE.MeshLambertMaterial({ map: tex });
+      const mesh = new THREE.InstancedMesh(boxGeo, mat, slice.length);
+      mesh.name = 'buildings_' + t;
+
+      for (let i = 0; i < slice.length; i++) {
+        const b = slice[i];
+        p.set(b.x, walkTop + b.h / 2, b.z);
+        s.set(b.w, b.h, b.d);
+        quat.identity();
+        m4.compose(p, quat, s);
+        mesh.setMatrixAt(i, m4);
+        col.set(PALETTE.wallTints[(start + i) % PALETTE.wallTints.length]);
+        mesh.setColorAt(i, col);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.castShadow = g.shadows;
+      mesh.receiveShadow = g.shadows;
+      group.add(mesh);
     }
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.castShadow = g.shadows;
-    mesh.receiveShadow = g.shadows;
-    group.add(mesh);
   }
 
   // Collision footprints (unchanged from M1).
@@ -310,6 +446,117 @@ export function createCity(scene, renderer) {
     }
   }
 
+  // --- Ground-floor shopfronts (M3.1) ------------------------------------
+  // A textured band pushed just outside the street-facing facade, on the
+  // primary face of selected lots. Pure visuals: collision footprints are
+  // unchanged (interiors of AABBs still stop the player and car).
+  if (g.shopfronts) {
+    const shopItems = [];
+    for (let i = 0; i < layout.length; i++) {
+      if (!features[i].shop) continue;
+      const b = layout[i];
+      if (b.dirX !== 0) {
+        shopItems.push({
+          x: b.x + b.dirX * (b.w / 2 + SHOP_THICK / 2),
+          y: walkTop + SHOP_H / 2,
+          z: b.z,
+          sx: SHOP_THICK,
+          sy: SHOP_H,
+          sz: b.d * 0.92,
+        });
+      } else {
+        shopItems.push({
+          x: b.x,
+          y: walkTop + SHOP_H / 2,
+          z: b.z + b.dirZ * (b.d / 2 + SHOP_THICK / 2),
+          sx: b.w * 0.92,
+          sy: SHOP_H,
+          sz: SHOP_THICK,
+        });
+      }
+    }
+    if (shopItems.length) {
+      const sTex = createShopfrontTexture(PALETTE);
+      sTex.anisotropy = maxAniso;
+      // Average band length -> horizontal tile repeat (one tile is ~3.4 m).
+      let len = 0;
+      for (let i = 0; i < shopItems.length; i++) {
+        len += Math.max(shopItems[i].sx, shopItems[i].sz);
+      }
+      len /= shopItems.length;
+      sTex.repeat.set(Math.max(2, Math.round(len / 3.4)), 1);
+
+      const shopMesh = buildInstanced(
+        boxGeo,
+        new THREE.MeshLambertMaterial({ map: sTex }),
+        shopItems,
+        false
+      );
+      shopMesh.name = 'shopfronts';
+      shopMesh.receiveShadow = g.shadows;
+      group.add(shopMesh);
+    }
+  }
+
+  // --- Balconies (M3.1) ---------------------------------------------------
+  // Thin protruding slabs with a front rail on a subset of taller buildings.
+  if (g.balconies) {
+    const slabs = [];
+    const rails = [];
+    for (let i = 0; i < layout.length && slabs.length < g.balconyBudget; i++) {
+      if (!features[i].balconies) continue;
+      const b = layout[i];
+      const floorsAbove = Math.max(1, Math.floor((b.h - SHOP_H - 4) / c.floorHeight));
+      if (floorsAbove < 1) continue;
+      const f = 2 + Math.floor(hash01(b.x, b.z, 31) * Math.min(floorsAbove, 6));
+      const y = walkTop + SHOP_H + f * c.floorHeight + 1.0; // sits above the shop band
+      const width = Math.min(2.8, b.w * 0.5);
+      const zoff = (hash01(b.x, b.z, 41) - 0.5) * Math.max(1.5, b.d - 2.6);
+      const xoff = (hash01(b.x, b.z, 43) - 0.5) * Math.max(1.5, b.w - 2.6);
+
+      if (hash01(b.x, b.z, 37) < 0.5 && b.dirX !== 0) {
+        // Faces +X / -X.
+        const cx = b.x + b.dirX * (b.w / 2 + BALCONY_DEPTH / 2 - 0.05);
+        slabs.push({ x: cx, y, z: b.z + zoff, sx: BALCONY_DEPTH, sy: 0.12, sz: width });
+        rails.push({
+          x: cx + b.dirX * (BALCONY_DEPTH / 2 - 0.03),
+          y: y + 0.62,
+          z: b.z + zoff,
+          sx: 0.06, sy: 0.64, sz: width,
+        });
+      } else {
+        // Faces +Z / -Z.
+        const cz = b.z + b.dirZ * (b.d / 2 + BALCONY_DEPTH / 2 - 0.05);
+        slabs.push({ x: b.x + xoff, y, z: cz, sx: width, sy: 0.12, sz: BALCONY_DEPTH });
+        rails.push({
+          x: b.x + xoff,
+          y: y + 0.62,
+          z: cz + b.dirZ * (BALCONY_DEPTH / 2 - 0.03),
+          sx: width, sy: 0.64, sz: 0.06,
+        });
+      }
+    }
+    if (slabs.length) {
+      const slabMesh = buildInstanced(
+        boxGeo,
+        new THREE.MeshLambertMaterial({ color: PALETTE.balcony }),
+        slabs,
+        false
+      );
+      slabMesh.name = 'balconies';
+      group.add(slabMesh);
+
+      const railMesh = buildInstanced(
+        boxGeo,
+        new THREE.MeshLambertMaterial({ color: PALETTE.balconyRail }),
+        rails,
+        false
+      );
+      railMesh.name = 'balconyRails';
+      group.add(railMesh);
+    }
+  }
+
   // --- Rooftop details: cornice + a few AC units --------------------------
   if (g.roofDetails) {
     const cornices = [];
@@ -350,6 +597,52 @@ export function createCity(scene, renderer) {
       );
       acMesh.name = 'acUnits';
       group.add(acMesh);
+    }
+
+    // Rooftop extras (M3.1): water tanks and radio antennas.
+    if (g.roofExtras) {
+      const tanks = [];
+      const antennas = [];
+      for (let i = 0; i < layout.length; i++) {
+        const b = layout[i];
+        if (features[i].tank) {
+          tanks.push({
+            x: b.x + (hash01(b.x, b.z, 53) - 0.5) * b.w * 0.4,
+            z: b.z + (hash01(b.x, b.z, 59) - 0.5) * b.d * 0.4,
+            y: walkTop + b.h + 0.55,
+          });
+        }
+        if (features[i].antenna) {
+          antennas.push({
+            x: b.x + b.dirX * (b.w / 2 - 0.25),
+            z: b.z + b.dirZ * (b.d / 2 - 0.25),
+            y: walkTop + b.h + 2.5,
+            sx: 0.14,
+            sy: 4.0,
+            sz: 0.14,
+          });
+        }
+      }
+      if (tanks.length) {
+        const tankMesh = buildInstanced(
+          new THREE.CylinderGeometry(0.9, 0.9, 1.1, 10),
+          new THREE.MeshLambertMaterial({ color: PALETTE.roofTank }),
+          tanks,
+          false
+        );
+        tankMesh.name = 'roofTanks';
+        group.add(tankMesh);
+      }
+      if (antennas.length) {
+        const antennaMesh = buildInstanced(
+          boxGeo,
+          new THREE.MeshLambertMaterial({ color: PALETTE.antenna }),
+          antennas,
+          false
+        );
+        antennaMesh.name = 'antennas';
+        group.add(antennaMesh);
+      }
     }
   }
 
@@ -439,8 +732,9 @@ function nearIntersection(value, roadCenters, roadWidth) {
 }
 
 // Add a zebra crosswalk on the +/- arms of an intersection. axisX=1 -> stripes
-// across the X road; axisX=0 -> across the Z road.
-function addCrosswalk(marks, rx, rz, axisX, axisZ, c, groundY) {
+// across the X road; axisX=0 -> across the Z road. Each arm also gets an
+// in-lane stop bar when stopBars is true.
+function addCrosswalk(marks, rx, rz, axisX, axisZ, c, groundY, stopBars) {
   const y = groundY + 0.02;
   const offset = c.roadWidth / 2 + 1.6; // just outside the intersection square
   const barCount = 4;
@@ -456,6 +750,20 @@ function addCrosswalk(marks, rx, rz, axisX, axisZ, c, groundY) {
       for (let b = 0; b < barCount; b++) {
         const x = rx - c.roadWidth * 0.35 + b * (c.roadWidth * 0.7) / (barCount - 1);
         marks.push({ x, y, z, sx: 0.8, sy: 0.02, sz: 2.2 });
+      }
+    }
+    if (stopBars) {
+      const sbO = offset + 3.1; // in-lane, just before the crosswalk
+      if (axisX === 1) {
+        marks.push({
+          x: rx + side * sbO, y, z: rz - c.roadWidth * 0.18,
+          sx: 2.0, sy: 0.02, sz: c.roadWidth * 0.36,
+        });
+      } else {
+        marks.push({
+          x: rx - c.roadWidth * 0.18, y, z: rz + side * sbO,
+          sx: c.roadWidth * 0.36, sy: 0.02, sz: 2.0,
+        });
       }
     }
   }
