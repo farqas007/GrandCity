@@ -13,6 +13,16 @@ function makeCanvas(width, height) {
   return canvas;
 }
 
+// PALETTE mixes numeric 0xRRGGBB hex ints (used for materials) with CSS colour
+// strings (used for canvas). Canvas APIs (addColorStop, fillStyle, ...) require
+// a CSS colour string, so convert numeric hex to '#rrggbb' at this boundary and
+// pass strings through unchanged. This keeps the intended original colours.
+function cssColor(value) {
+  return typeof value === 'number'
+    ? '#' + (value & 0xffffff).toString(16).padStart(6, '0')
+    : value;
+}
+
 // Deterministic integer hash -> fraction in [0, 1). Used so textures repeat
 // identically every load without a shared PRNG stream.
 function hash01(x, y, salt) {
@@ -167,14 +177,14 @@ export function createShopfrontTexture(palette) {
 
   // Awning band across the top (striped, colour is baked).
   const awningH = h * 0.24;
-  ctx.fillStyle = palette.awning;
+  ctx.fillStyle = cssColor(palette.awning);
   ctx.fillRect(0, 0, w, awningH);
   ctx.fillStyle = '#e8d9bf';
   for (let x = 0; x < w; x += 32) {
     ctx.fillRect(x, 0, 12, awningH);
   }
   // scalloped awning bottom edge
-  ctx.fillStyle = palette.awning;
+  ctx.fillStyle = cssColor(palette.awning);
   for (let x = 0; x < w; x += 16) {
     ctx.beginPath();
     ctx.arc(x + 8, awningH, 8, 0, Math.PI);
@@ -184,7 +194,7 @@ export function createShopfrontTexture(palette) {
   // Glass display band between awning and sidewalk.
   const gy = awningH + 8;
   const gh = h - gy - 10;
-  ctx.fillStyle = palette.shopFrame;
+  ctx.fillStyle = cssColor(palette.shopFrame);
   ctx.fillRect(4, gy - 3, w - 8, gh + 6);
 
   // Panel columns.
@@ -193,7 +203,7 @@ export function createShopfrontTexture(palette) {
   const pw = (w - pad * 2 - (cols - 1) * 4) / cols;
   const grad = ctx.createLinearGradient(0, gy, 0, gy + gh);
   grad.addColorStop(0, '#5d7286');
-  grad.addColorStop(1, palette.shopGlass);
+  grad.addColorStop(1, cssColor(palette.shopGlass));
   ctx.fillStyle = grad;
   for (let c = 0; c < cols; c++) {
     const x = pad + c * (pw + 4);
