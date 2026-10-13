@@ -115,6 +115,9 @@ const PRESETS = {
       stopBars: false,
       detailedProps: false,
       benchBudget: 0,
+      // M4.2 - pedestrians are additive (created by main.js, not createCity), so
+      // this budget never affects the existing city geometry baselines.
+      pedBudget: 10,
     },
   },
 
@@ -155,6 +158,7 @@ const PRESETS = {
       stopBars: true,
       detailedProps: true,
       benchBudget: 40,
+      pedBudget: 20,
     },
   },
 
@@ -197,6 +201,7 @@ const PRESETS = {
       stopBars: true,
       detailedProps: true,
       benchBudget: 90,
+      pedBudget: 32,
     },
   },
 };
@@ -246,6 +251,12 @@ export const CONFIG = {
     // Legacy "?res=<scale>" override range (relative to the window size).
     customMinScale: 0.4,
     customMaxScale: 1.5,
+    // M4.1 - practical low internal-resolution profile for weak GPUs (e.g. the
+    // 4 GB Chromebook target). OPT-IN via "?profile=perf" or the overlay; the
+    // 8K/12K/20K targets above and the "?res=" custom mode are unchanged.
+    profiles: {
+      perf: [1280, 720], // "720p" internal buffer: ~3.7 MP vs 8K's ~33 MP
+    },
   },
 
   graphics: {
@@ -281,6 +292,118 @@ export const CONFIG = {
     stopBars: true,
     detailedProps: true,
     benchBudget: 40,
+    // M4.1 - lightweight distance culling for street props (lamps/trees/bins/
+    // benches). OFF by default so every existing preset generates byte-identical
+    // geometry; opt in with "?cull=1" (or the overlay). When on, each prop
+    // category is split once at load into spatial chunks and each chunk is
+    // shown/hidden per frame by XZ distance — no geometry is regenerated.
+    distanceCulling: false,
+    cullDistance: 160, // XZ radius (metres) kept visible
+    cullChunk: 40, // spatial bucket size (metres) used when splitting
+    // M4.2 - pedestrian budget (per preset). 0 disables pedestrians entirely.
+    // Additive: pedestrians live outside createCity, so city geometry and the
+    // established regression baselines are untouched by this value.
+    pedBudget: 20,
+  },
+
+  // ---------------------------------------------------------------------
+  // M4.2 - pedestrian AI foundation. All values are cheap to change and the
+  // whole system is disabled by setting graphics.pedBudget = 0 (or ?peds=0).
+  // ---------------------------------------------------------------------
+  pedestrians: {
+    enabled: true,
+    seed: 24601, // pedestrian-only PRNG (never touches the city layout stream)
+    count: 20, // fallback when graphics.pedBudget is absent
+    maxCount: 64, // hard safety cap
+    radius: 0.35, // collision radius against buildings / bounds
+    scaleMin: 0.9,
+    scaleMax: 1.1, // per-person height variation
+    girthMin: 0.88,
+    girthMax: 1.14, // per-person width variation
+    speedMin: 1.0, // metres / second
+    speedMax: 1.9,
+    accel: 4.5, // how fast actual speed approaches the target (1 / second)
+    turnRate: 3.4, // max heading change (radians / second) -> smooth turning
+    minThink: 5, // seconds between destination re-picks
+    maxThink: 14,
+    arrive: 1.4, // metres; close enough to a waypoint to pick the next one
+    avoidRadius: 2.4, // pedestrian-vs-pedestrian keep-clear radius
+    noticeRadius: 7, // metres; the player is "noticed" within this range
+    playerAvoidRadius: 2.0, // hard keep-clear from the player/car
+    sepWeight: 1.1, // weight of the separation steering
+    farUpdateDistance: 90, // beyond this, simulate at a reduced rate
+    farStep: 0.1, // seconds per simulation step when far (10 Hz)
+    repositionDistance: 300, // relocate an NPC this far from the player
+    // Spawn rings. Measured on the real skinned model (assets/pedestrians/sam.glb):
+    // it renders a believable 1.67-1.89 m across the whole walk cycle at scale
+    // 1.0, so the model itself is NOT undersized. The "much too small" look is
+    // purely a placement question - how far the humans are from the player.
+    //   * old 18-120 m ring : nearest pedestrian 58.9 m  (~27 px on a 1080p frame)
+    //   - 18-55 m ring       : nearest ~18 m              (~86 px)
+    //   - 10-40 m ring (now): nearest ~10 m              (~150 px, clearly visible)
+    // The ring still fills BOTH near and medium range (10-40 m), and the model
+    // scale stays 1.0: enlarging it would make it wrong against a human-scale
+    // city (doors are 3.0 m, floors 3.2 m, the player eye 1.7 m).
+    // (Distances measured on the real spawner, seed 24601.)
+    spawnMinDist: 10, // initial spawn ring around the player
+    spawnMaxDist: 40, // was 55/120; see the ring note above
+    respawnMinDist: 20, // relocation ring; brought in so relocated NPCs stay readable
+    respawnMaxDist: 60, // a little wider than the initial ring, so relocations rarely pop in view
+  },
+
+  // ---------------------------------------------------------------------
+  // M4.2.1 - optional human-model presentation (opt-in, DEFAULT OFF).
+  // Shows ONE pedestrian as the rigged CC0 "Sam" walker
+  // (assets/pedestrians/sam.glb) instead of the box parts, through the
+  // vendored GLTFLoader + SkeletonUtils. Nothing here runs unless it is
+  // enabled, so the M4.2 box population is otherwise byte-identical.
+  // ---------------------------------------------------------------------
+  person: {
+    enabled: false, // opt in with "?person=1" (or the overlay button)
+    modelUrl: './assets/pedestrians/sam.glb',
+    // Which pedestrian is shown as the model:
+    //   -1 = the NEAREST eligible pedestrian, re-selected dynamically each frame
+    //        (S0 default); >= 0 = a fixed index (legacy / headless debugging).
+    index: -1,
+    claimRadius: 90, // metres; the model follows the nearest pedestrian within this range
+                     // (matches the near/far update distance, so a claimed pedestrian
+                     // is always refreshed every frame - no stepped/far-tier motion)
+    claimHysteresis: 3, // metres; a new pedestrian must be closer by this much to take the model
+    clip: 'Walk_Relaxed', // clip name inside the GLB
+    clipSpeed: 1.3, // authored in-place walk speed (m/s) used to sync playback
+    maxTimeScale: 1.6, // clamp so slow speeds never over-speed the walk
+    scale: 1.0, // uniform model scale (1 = the model's own ~1.8 m height)
+    facingOffset: 0, // radians added to heading (forward axis not yet verified)
+    yOffset: 0.0, // feet offset above ground (bind pose already sits on y=0)
+  },
+
+  // ---------------------------------------------------------------------
+  // S1 - crowd presentation (opt-in, DEFAULT OFF). Extends the M4.2.1 idea to
+  // present up to `max` pedestrians as skinned human instances of the SAME CC0
+  // model (assets/pedestrians/sam.glb), reusing the loaded geometry and
+  // materials across instances (SkeletonUtils.clone shares them by reference),
+  // each with its own AnimationMixer. Presentation only: it consumes the
+  // transform the pedestrian AI already produces and never moves anybody.
+  //
+  // HONEST SCOPE: these are `max` copies of one character. They are NOT varied
+  // faces, outfits or skin tones - genuinely distinct characters are a later
+  // stage. Do not fake that variety with material tinting.
+  //
+  // Opt in with "?crowd=1". It is a superset of the single-instance "?person"
+  // layer; if both are requested the crowd wins (see main.js).
+  // ---------------------------------------------------------------------
+  crowd: {
+    enabled: false, // opt in with "?crowd=1"
+    modelUrl: './assets/pedestrians/sam.glb',
+    max: 4, // maximum realistic humans presented at once
+    radius: 90, // metres; only pedestrians within this range are eligible
+    hysteresis: 3, // metres; a newcomer must be closer by this much to take a slot
+    clip: 'Walk_Relaxed', // clip name inside the GLB
+    clipSpeed: 1.3, // authored in-place walk speed (m/s) used to sync playback
+    maxTimeScale: 1.6, // clamp so slow speeds never over-speed the walk
+    scale: 1.4, // uniform model scale (1 = the model's own ~1.8 m height)
+    facingOffset: 0, // radians added to heading (forward axis not yet verified)
+    yOffset: 0.0, // feet offset above ground (bind pose already sits on y=0)
   },
 
   city: {
@@ -299,6 +422,19 @@ export const CONFIG = {
     floorHeight: 3.2, // used to tile the facade texture vertically
     bayWidth: 3.4, // used to tile the facade texture horizontally
     markWidth: 0.35, // road centre-line width
+  },
+
+  // ---------------------------------------------------------------------
+  // Phase 1 - opt-in endless world (?world=endless). A NEW procedural layout
+  // on a stable global block lattice; the finite `city` above remains the
+  // default and is completely untouched. Only the central chunk is generated
+  // in Phase 1 (no streaming yet) - see src/world/chunk.js. Nothing here runs
+  // unless ?world=endless is present.
+  // ---------------------------------------------------------------------
+  world: {
+    endless: false, // set true by main.js when ?world=endless is present
+    chunkBlocks: 2, // blocks per chunk side (chunk = chunkBlocks^2 blocks; even)
+    seed: 90210, // salt for the per-chunk PRNG (global position still dominates)
   },
 
   player: {

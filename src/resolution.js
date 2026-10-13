@@ -51,6 +51,18 @@ export function pickTarget(quality, resParam, windowSize) {
   return { mode: 'target', width: t[0], height: t[1] };
 }
 
+// M4.1: practical low internal-resolution profile (e.g. "perf" -> 1280x720) for
+// weak GPUs. Returns null for an unknown/missing name so the caller keeps the
+// existing fixed-target behaviour untouched. This is an explicit, opt-in
+// request — it is never applied unless named, and never silently downscales.
+export function pickProfile(name) {
+  if (!name) return null;
+  const profiles = CONFIG.resolution.profiles;
+  const t = profiles && profiles[name];
+  if (!t) return null;
+  return { mode: 'profile', profile: name, width: t[0], height: t[1] };
+}
+
 // Read the WebGL limits that bound the default framebuffer. Returns
 // available:false when there is no usable context, so the caller can still
 // render and report "unknown" rather than guessing.

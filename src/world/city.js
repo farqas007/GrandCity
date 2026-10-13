@@ -15,6 +15,7 @@ import {
   createPavementTexture,
 } from '../gfx/textures.js';
 import { createProps } from './props.js';
+import { createDistanceCuller } from './culling.js';
 
 // Small deterministic PRNG (mulberry32). Same seed -> same city every load.
 function mulberry32(seed) {
@@ -64,6 +65,10 @@ export function createCity(scene, renderer) {
     CONFIG.render.anisotropy,
     renderer ? renderer.capabilities.getMaxAnisotropy() : 1
   );
+
+  // M4.1: optional distance culling for street props. null when disabled, in
+  // which case createProps builds exactly the same single meshes as before.
+  const culler = g.distanceCulling ? createDistanceCuller(g.cullChunk) : null;
 
   const group = new THREE.Group();
   group.name = 'city';
@@ -659,6 +664,7 @@ export function createCity(scene, renderer) {
     walkTop,
     graphics: g,
     emptyLots,
+    culler,
   });
 
   scene.add(group);
@@ -715,6 +721,12 @@ export function createCity(scene, renderer) {
     return groundY;
   }
 
+  // M4.1: per-frame distance culling. A no-op unless distanceCulling is enabled
+  // (culler is null); it only toggles chunk visibility, never geometry.
+  function updateCulling(camera) {
+    if (culler) culler.update(camera, g.cullDistance);
+  }
+
   return {
     group,
     bounds,
@@ -722,6 +734,8 @@ export function createCity(scene, renderer) {
     propCounts: props.counts,
     resolveCollision,
     groundHeightAt,
+    culler,
+    updateCulling,
   };
 }
 

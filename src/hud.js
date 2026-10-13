@@ -38,6 +38,9 @@ export function createHud() {
   add('speed', 'Speed');
   add('quality', 'Quality');
   add('shadows', 'Shadows');
+  add('peds', 'Pedestrians');
+  add('humans', 'Human models');
+  add('crowd', 'Crowd humans');
   add('resolution', 'Target res');
   add('buffer', 'Draw buffer');
   add('caps', 'GL cap');
@@ -76,6 +79,9 @@ export function createHud() {
         values.speed.textContent = info.speed;
         values.quality.textContent = info.quality;
         values.shadows.textContent = info.shadows;
+        values.peds.textContent = info.peds === undefined ? '--' : String(info.peds);
+        values.humans.textContent = info.humans === undefined ? '--' : String(info.humans);
+        values.crowd.textContent = info.crowd === undefined ? '--' : String(info.crowd);
         values.resolution.textContent = info.resolution;
         values.buffer.textContent = info.buffer;
         values.caps.textContent = info.caps;

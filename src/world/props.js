@@ -106,6 +106,41 @@ export function createProps(parent, ctx) {
   const group = new THREE.Group();
   group.name = 'props';
 
+  // M4.1: optional distance culling. When a culler is supplied, each category is
+  // split once at load into spatial chunks (per culler.chunkSize), each its own
+  // InstancedMesh sharing the same geometry + material, so distant furniture can
+  // be hidden per frame. Without a culler this builds a single mesh exactly as
+  // before, so disabled culling produces byte-identical geometry.
+  const culler = ctx.culler || null;
+
+  function emit(geometry, material, items, useColor) {
+    if (!items.length) return;
+    if (!culler) {
+      group.add(buildInstanced(geometry, material, items, useColor));
+      return;
+    }
+    const size = culler.chunkSize;
+    const buckets = new Map();
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const key = Math.floor(it.x / size) + ':' + Math.floor(it.z / size);
+      let b = buckets.get(key);
+      if (!b) {
+        b = { sumX: 0, sumZ: 0, n: 0, items: [] };
+        buckets.set(key, b);
+      }
+      b.items.push(it);
+      b.sumX += it.x;
+      b.sumZ += it.z;
+      b.n++;
+    }
+    buckets.forEach((b) => {
+      const mesh = buildInstanced(geometry, material, b.items, useColor);
+      group.add(mesh);
+      culler.add(mesh, b.sumX / b.n, b.sumZ / b.n);
+    });
+  }
+
   // --- Lamps: pole, arm, lantern (head) and cap ---------------------------
   if (lamps.length) {
     const poleItems = [];
@@ -124,35 +159,31 @@ export function createProps(parent, ctx) {
         capItems.push({ x: lx + 1.2, y: walkTop + 4.56, z: lz, sx: 0.8, sy: 0.16, sz: 0.8 });
       }
     }
-    const poles = buildInstanced(
+    emit(
       new THREE.CylinderGeometry(0.09, 0.11, 4.4, 6),
       new THREE.MeshLambertMaterial({ color: PALETTE.metal }),
       poleItems,
       false
     );
-    group.add(poles);
-    const heads = buildInstanced(
+    emit(
       new THREE.BoxGeometry(0.55, 0.24, 0.55),
       new THREE.MeshBasicMaterial({ color: PALETTE.lamp }),
       headItems,
       false
     );
-    group.add(heads);
     if (g.detailedProps) {
-      const arms = buildInstanced(
+      emit(
         new THREE.BoxGeometry(1, 1, 1),
         new THREE.MeshLambertMaterial({ color: PALETTE.metal }),
         armItems,
         false
       );
-      group.add(arms);
-      const caps = buildInstanced(
+      emit(
         new THREE.BoxGeometry(1, 1, 1),
         new THREE.MeshLambertMaterial({ color: PALETTE.metal }),
         capItems,
         false
       );
-      group.add(caps);
     }
   }
 
@@ -196,28 +227,25 @@ export function createProps(parent, ctx) {
         });
       }
     }
-    const trunks = buildInstanced(
+    emit(
       new THREE.CylinderGeometry(0.13, 0.18, 2.2, 5),
       new THREE.MeshLambertMaterial({ color: PALETTE.trunk }),
       trunkItems,
       false
     );
-    group.add(trunks);
-    const foliage = buildInstanced(
+    emit(
       new THREE.IcosahedronGeometry(1.35, 0),
       new THREE.MeshLambertMaterial(),
       foliageItems,
       true
     );
-    group.add(foliage);
     if (twoLayer && topItems.length) {
-      const top = buildInstanced(
+      emit(
         new THREE.IcosahedronGeometry(1.35, 0),
         new THREE.MeshLambertMaterial(),
         topItems,
         true
       );
-      group.add(top);
     }
   }
 
@@ -227,13 +255,12 @@ export function createProps(parent, ctx) {
     for (let i = 0; i < bins.length; i++) {
       binItems.push({ x: bins[i].x, y: walkTop + 0.45, z: bins[i].z });
     }
-    const binMesh = buildInstanced(
+    emit(
       new THREE.BoxGeometry(0.6, 0.9, 0.6),
       new THREE.MeshLambertMaterial({ color: PALETTE.bin }),
       binItems,
       false
     );
-    group.add(binMesh);
   }
 
   // --- Benches (M3.1): seat + backrest ------------------------------------
@@ -245,20 +272,18 @@ export function createProps(parent, ctx) {
       seatItems.push({ x: b.x, y: walkTop + 0.5, z: b.z, sx: 1.6, sy: 0.15, sz: 0.5, ry: b.rot });
       backItems.push({ x: b.x, y: walkTop + 0.85, z: b.z - 0.22, sx: 1.6, sy: 0.55, sz: 0.1, ry: b.rot });
     }
-    const seats = buildInstanced(
+    emit(
       new THREE.BoxGeometry(1, 1, 1),
       new THREE.MeshLambertMaterial({ color: PALETTE.bench }),
       seatItems,
       false
     );
-    group.add(seats);
-    const backs = buildInstanced(
+    emit(
       new THREE.BoxGeometry(1, 1, 1),
       new THREE.MeshLambertMaterial({ color: PALETTE.benchBack }),
       backItems,
       false
     );
-    group.add(backs);
   }
 
   parent.add(group);

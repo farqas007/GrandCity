@@ -150,6 +150,9 @@
         <button data-quality="medium" type="button">Medium</button>
         <button data-quality="high" type="button">High</button>
         <button data-shadows type="button">Shadows: Off</button>
+        <button data-profile="perf" type="button">Performance (720p)</button>
+        <button data-cull type="button">Culling: Off</button>
+        <button data-person type="button">Human model: Off</button>
       </div>
 
       <p class="msg" id="overlay-message"></p>
@@ -160,7 +163,8 @@
   <script type="importmap">
     {
       "imports": {
-        "three": "./vendor/three.module.js"
+        "three": "./vendor/three.module.js",
+        "three/addons/": "./vendor/addons/"
       }
     }
   </script>

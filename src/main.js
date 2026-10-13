@@ -6,12 +6,16 @@
 import * as THREE from 'three';
 import { CONFIG, PALETTE, applyQuality } from './config.js';
 import { createEnvironment } from './world/environment.js';
-import { createCity } from './world/city.js';
+import { createWorld, isEndlessRequested } from './world/chunk.js';
+import { createPedestrians } from './world/pedestrians.js';
+import { createPedPeople } from './world/pedPeople.js';
+import { createCrowd } from './world/crowd.js';
 import { FirstPersonControls } from './controls.js';
 import { createVehicle, CarController } from './vehicle.js';
 import { createHud } from './hud.js';
 import {
   pickTarget,
+  pickProfile,
   queryCaps,
   predictDrawingBuffer,
   limitationText,
@@ -49,6 +53,15 @@ function setParam(key, value) {
   window.location.href = url.toString();
 }
 
+// Toggle a single query parameter: remove it when it already holds `value`,
+// otherwise set it. Used by the overlay's on/off (profile, culling) buttons.
+function toggleParam(key, value) {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get(key) === value) url.searchParams.delete(key);
+  else url.searchParams.set(key, value);
+  window.location.href = url.toString();
+}
+
 // Show the selected quality, requested resolution and measured draw buffer on
 // the start overlay too (the HUD repeats it live in-game).
 function updateResolutionUI(state, caps) {
@@ -73,15 +86,61 @@ const params = new URLSearchParams(window.location.search);
 const activeQuality = applyQuality(params.get('quality') || CONFIG.quality.default);
 const resParam = parseFloat(params.get('res'));
 
-const resolutionPlan = pickTarget(activeQuality, resParam, {
-  w: window.innerWidth,
-  h: window.innerHeight,
-});
+// M4.1: an explicit low internal-resolution profile ("?profile=perf"). The legacy
+// "?res=" custom mode keeps precedence, so its meaning is unchanged; otherwise the
+// fixed 8K/12K/20K target is requested exactly as before. Nothing is silently
+// downscaled — a profile is only used when it is explicitly named.
+const useCustomRes = Number.isFinite(resParam) && resParam > 0;
+const profilePlan = useCustomRes ? null : pickProfile(params.get('profile'));
+const resolutionPlan =
+  profilePlan ||
+  pickTarget(activeQuality, resParam, {
+    w: window.innerWidth,
+    h: window.innerHeight,
+  });
 
 const shadowParam = params.get('shadows');
 if (shadowParam !== null) {
   CONFIG.graphics.shadows = shadowParam === '1' || shadowParam === 'true';
 }
+
+// M4.1: opt-in distance culling for street props (default off -> byte-identical
+// generation). Set before boot() so createCity sees it.
+const cullParam = params.get('cull');
+if (cullParam !== null) {
+  CONFIG.graphics.distanceCulling = cullParam === '1' || cullParam === 'true';
+}
+
+// M4.2: optional pedestrian population override ("?peds=N"). 0 disables the
+// system entirely; values are clamped to the configured safety cap.
+const pedsParam = params.get('peds');
+if (pedsParam !== null) {
+  const n = parseInt(pedsParam, 10);
+  if (Number.isFinite(n)) {
+    CONFIG.graphics.pedBudget = Math.max(0, Math.min(CONFIG.pedestrians.maxCount, n));
+  }
+}
+
+// M4.2.1: optional human-model presentation for exactly ONE pedestrian. Opt-in
+// only — "?person=1" (or "?person=sam"); the default leaves the box pedestrians
+// completely unchanged.
+const personParam = params.get('person');
+if (personParam !== null) {
+  CONFIG.person.enabled =
+    personParam === '1' || personParam === 'true' || personParam === 'sam';
+}
+
+// S1: optional realistic-crowd presentation (up to CONFIG.crowd.max instances of
+// the one CC0 human model). Opt-in only — "?crowd=1"; the default leaves the box
+// pedestrians completely unchanged. It is a superset of the single-instance
+// "?person" layer, so when both are requested the crowd takes precedence (they
+// would otherwise fight over the same nearest pedestrians). "?person=1" alone is
+// unchanged.
+const crowdParam = params.get('crowd');
+if (crowdParam !== null) {
+  CONFIG.crowd.enabled = crowdParam === '1' || crowdParam === 'true';
+}
+if (CONFIG.crowd.enabled) CONFIG.person.enabled = false;
 
 canvas.addEventListener('webglcontextcreationerror', (e) => {
   fatal(
@@ -181,9 +240,11 @@ function boot() {
   camera.position.set(0, CONFIG.player.eyeHeight, 0);
   camera.rotation.order = 'YXZ';
 
-  const world = createCity(scene, renderer);
+  // Phase 1: opt-in endless world (?world=endless). The default URL keeps the
+  // finite city; createWorld() is the single selection point.
+  CONFIG.world.endless = isEndlessRequested(params);
+  const world = createWorld(scene, renderer, params);
   const controls = new FirstPersonControls(camera, renderer.domElement, world);
-
   controls.onLockChange = (locked, message) => {
     if (locked) {
       overlay.classList.add('hidden');
@@ -204,6 +265,63 @@ function boot() {
   const vehicle = createVehicle(scene);
   const car = new CarController(vehicle, world);
   let mode = 'walk';
+
+  // M4.2: pedestrians are created here (not in createCity) so the city geometry
+  // and every existing regression baseline stay byte-identical. Returns null if
+  // the system is disabled (?peds=0 / pedBudget 0) or a world API is missing.
+  // M4.2.1 / S1: when a human-model layer is enabled, a separate presentation
+  // module is handed the transforms of some pedestrians through a tiny additive
+  // hook. The hook reports "not ready" until the GLB has loaded, so a box
+  // pedestrian stays the visible fallback until its human is actually displayed,
+  // and remains the only representation when neither layer is enabled.
+  //   * "?crowd=1" (S1): up to CONFIG.crowd.max NEAREST pedestrians, each an
+  //     independent instance of the one CC0 model.
+  //   * "?person=1" (M4.2.1/S0): exactly ONE nearest pedestrian (unchanged).
+  let presenter = null;
+  let crowd = null;
+  const personHook = CONFIG.person.enabled
+    ? (p) => (presenter ? presenter.present(p) : false)
+    : null;
+  const crowdHook = CONFIG.crowd.enabled ? (p) => (crowd ? crowd.present(p) : false) : null;
+  const crowdClaims = crowdHook
+    ? (claims) => {
+        if (crowd) crowd.onClaims(claims);
+      }
+    : null;
+
+  const pedestrians = createPedestrians(
+    scene,
+    world,
+    crowdHook
+      ? {
+          present: crowdHook,
+          onClaims: crowdClaims,
+          presentCount: CONFIG.crowd.max,
+          presentRadius: CONFIG.crowd.radius,
+          presentHysteresis: CONFIG.crowd.hysteresis,
+          // S1: the realistic humans replace the WHOLE population, so simulate
+          // exactly as many pedestrians as there are human instances (4 by
+          // default) - never the full box population with the rest left
+          // invisible. A smaller explicit "?peds=N" (or a "?peds=0" disable) is
+          // still respected.
+          count: Math.min(CONFIG.graphics.pedBudget, CONFIG.crowd.max),
+          // S1: crowd mode replaces the WHOLE population with realistic humans,
+          // so the old box pedestrians must never be rendered (not on spawn,
+          // update, respawn or any other path). "?person=1" keeps its boxes.
+          showBoxes: false,
+        }
+      : personHook
+        ? {
+            present: personHook,
+            presentIndex: CONFIG.person.index,
+            presentRadius: CONFIG.person.claimRadius,
+            presentHysteresis: CONFIG.person.claimHysteresis,
+          }
+        : undefined
+  );
+
+  if (pedestrians && personHook) presenter = createPedPeople(scene);
+  if (pedestrians && crowdHook) crowd = createCrowd(scene);
 
   function enterCar() {
     mode = 'drive';
@@ -257,6 +375,35 @@ function boot() {
     shadowBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       setParam('shadows', CONFIG.graphics.shadows ? '0' : '1');
+    });
+  }
+
+  // M4.1: performance profile (fixed low internal resolution) and the optional
+  // prop-culling toggle. Both are purely additive URL switches.
+  const profileBtn = document.querySelector('[data-profile]');
+  if (profileBtn) {
+    profileBtn.classList.toggle('active', resolutionPlan.mode === 'profile');
+    profileBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleParam('profile', 'perf');
+    });
+  }
+  const cullBtn = document.querySelector('[data-cull]');
+  if (cullBtn) {
+    cullBtn.textContent = 'Culling: ' + (CONFIG.graphics.distanceCulling ? 'On' : 'Off');
+    cullBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleParam('cull', CONFIG.graphics.distanceCulling ? '0' : '1');
+    });
+  }
+
+  // M4.2.1: opt-in toggle for the single human model (default Off).
+  const personBtn = document.querySelector('[data-person]');
+  if (personBtn) {
+    personBtn.textContent = 'Human model: ' + (CONFIG.person.enabled ? 'On' : 'Off');
+    personBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleParam('person', CONFIG.person.enabled ? '0' : '1');
     });
   }
 
@@ -323,6 +470,22 @@ function boot() {
 
     env.update(camera);
 
+    // M4.1: distance culling for street props (no-op unless enabled).
+    if (world.updateCulling) world.updateCulling(camera);
+
+    // M4.2: pedestrians simulate from this single loop (no per-NPC timers). The
+    // "player" is the car while driving, otherwise the walking camera.
+    if (pedestrians) {
+      const player = mode === 'drive' ? car.position : camera.position;
+      pedestrians.update(dt, camera, player);
+    }
+
+    // M4.2.1: advance the optional human-model animation (no-op when disabled).
+    if (presenter) presenter.update(dt);
+
+    // S1: advance each displayed crowd instance's own mixer (no-op when disabled).
+    if (crowd) crowd.update(dt);
+
     renderer.render(scene, camera);
 
     positionText = `${camera.position.x.toFixed(1)}, ${camera.position.z.toFixed(1)}`;
@@ -334,6 +497,9 @@ function boot() {
       speed: speedText,
       quality: presetLabel,
       shadows: CONFIG.graphics.shadows ? 'On' : 'Off',
+      peds: pedestrians ? pedestrians.count : 0,
+      humans: presenter ? presenter.active : 0,
+      crowd: crowd ? crowd.active : 0,
       resolution: `${resolutionState.label} · ${resolutionState.target.width}×${resolutionState.target.height}`,
       buffer: `${resolutionState.applied.actualWidth}×${resolutionState.applied.actualHeight}`,
       caps: caps.available && caps.maxRenderbuffer ? `GL max ${caps.maxRenderbuffer}` : 'GL max --',
