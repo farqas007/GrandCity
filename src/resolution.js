@@ -121,6 +121,38 @@ export function limitationText(pred) {
   return `requested ${pred.targetW}×${pred.targetH} exceeds GPU limit ${pred.capW}×${pred.capH}`;
 }
 
+// --- resize policy (M3.2 fix) ---------------------------------------------
+// True when the renderer's *live* drawing buffer no longer matches what we last
+// measured. This lets the fixed target self-heal if it is ever reset or lost,
+// while a normal window resize (which never touches the buffer) is a no-op — so
+// the exact 8K/12K/20K request is never overwritten on resize or fullscreen.
+export function bufferNeedsReapply(state, gl) {
+  const applied = state && state.applied;
+  if (!applied || !applied.ok) return true;
+  if (!gl || typeof gl.drawingBufferWidth !== 'number') return false;
+  return (
+    gl.drawingBufferWidth !== applied.actualWidth ||
+    gl.drawingBufferHeight !== applied.actualHeight
+  );
+}
+
+// The aspect the camera must match. Uses the measured drawing buffer when we
+// have one, otherwise the requested target — deliberately NOT the window aspect,
+// so the camera and the letterboxed canvas always agree (avoids stretching when
+// a buffer could not be allocated).
+export function displayAspect(state) {
+  if (!state) return 1;
+  const applied = state.applied;
+  if (applied && applied.actualWidth > 0 && applied.actualHeight > 0) {
+    return applied.actualWidth / applied.actualHeight;
+  }
+  const target = state.target;
+  if (target && target.width > 0 && target.height > 0) {
+    return target.width / target.height;
+  }
+  return 1;
+}
+
 // Ask the renderer for an exact internal buffer size and measure what came back.
 // `updateStyle` is false so the on-screen CSS size is never changed here.
 // Never throws: failures are returned in `error` / `ok:false`.

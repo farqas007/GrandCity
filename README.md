@@ -27,6 +27,10 @@ each quality name requests one exact internal drawing-buffer size:
 - The request is **never auto-lowered to improve FPS**. It is applied as an exact
   request (`setPixelRatio(1)` + `setSize(w, h, false)`); the on-screen CSS size
   is left alone and the canvas is letterboxed to preserve the buffer's aspect.
+- The fixed target is **preserved across window resizes and fullscreen
+  changes**: a resize only re-fits the canvas on screen and updates the camera
+  aspect. The buffer is re-issued at the exact target *only* if it was actually
+  reset or lost — it is never reallocated to the window size.
 - The **actual** drawing buffer is measured back from WebGL
   (`gl.drawingBufferWidth/Height`) and shown in the HUD (`Draw buffer`) and on
   the start overlay. A shortfall is **reported, never hidden**.

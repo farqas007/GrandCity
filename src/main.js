@@ -18,6 +18,8 @@ import {
   requestBuffer,
   fitCanvas,
   labelFor,
+  bufferNeedsReapply,
+  displayAspect,
 } from './resolution.js';
 
 const canvas = document.getElementById('scene');
@@ -129,9 +131,9 @@ function boot() {
   );
 
   function currentAspect() {
-    const a = resolutionState && resolutionState.applied;
-    if (a && a.actualWidth > 0 && a.actualHeight > 0) {
-      return a.actualWidth / a.actualHeight;
+    if (resolutionState) {
+      const aspect = displayAspect(resolutionState);
+      if (aspect > 0) return aspect;
     }
     return window.innerWidth / Math.max(1, window.innerHeight);
   }
@@ -259,18 +261,19 @@ function boot() {
   }
 
   window.addEventListener('resize', () => {
-    // Fixed targets keep their exact buffer; only the on-screen fit changes.
-    // Custom (?res=) mode is window-relative, so it re-requests the buffer.
-    if (resolutionPlan.mode === 'custom') {
+    // A fixed target must survive window resizes AND fullscreen changes. The
+    // exact requested buffer is only re-issued when the live buffer was reset
+    // or lost (bufferNeedsReapply); a normal resize just re-fits the canvas, so
+    // the fixed 8K/12K/20K request is never overwritten by a setSize() to the
+    // window size. Custom (?res=) targets are window-relative, so they re-apply.
+    if (resolutionPlan.mode === 'custom' || bufferNeedsReapply(resolutionState, gl)) {
       resolutionState = applyResolution();
     } else {
       const a = resolutionState.applied;
-      fitCanvas(
-        canvas,
-        a.actualWidth || resolutionState.target.width,
-        a.actualHeight || resolutionState.target.height,
-        { w: window.innerWidth, h: window.innerHeight }
-      );
+      fitCanvas(canvas, a.actualWidth, a.actualHeight, {
+        w: window.innerWidth,
+        h: window.innerHeight,
+      });
     }
     camera.aspect = currentAspect();
     camera.updateProjectionMatrix();
