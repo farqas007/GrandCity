@@ -57,8 +57,11 @@ export function createCity(scene, renderer) {
   const groundY = -c.curbHeight; // road surface height
   const walkTop = c.walkTop; // sidewalk surface height (buildings sit here)
   const rand = mulberry32(c.seed);
+  // Texture anisotropy follows the quality preset (Low 1 / Medium 2 / High 4),
+  // clamped to the GPU limit. Deliberately independent of shadow enablement:
+  // turning shadows on (e.g. the legacy ?shadows=1 override) must not raise it.
   const maxAniso = Math.min(
-    g.shadows ? 4 : CONFIG.render.anisotropy,
+    CONFIG.render.anisotropy,
     renderer ? renderer.capabilities.getMaxAnisotropy() : 1
   );
 
