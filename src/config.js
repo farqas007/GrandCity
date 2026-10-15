@@ -457,6 +457,30 @@ export const CONFIG = {
     },
   },
 
+  // ---------------------------------------------------------------------
+  // Phase A/B - streaming pedestrian population (config default OFF; main.js
+  // turns it ON by default for the endless+streaming URL).
+  // Keeps pedestrian *records* in step with the endless world's loaded chunks
+  // (src/world/pedestriansStream.js) and, in Phase B, presents the nearest few
+  // through the existing human renderer (src/world/crowd.js). Default ON for
+  // "?world=endless&stream=1"; disable it with "?pedestrians=0" (or "false"),
+  // and "?pedestrians=1"/"true" is an explicit confirmation. Every other URL is
+  // unchanged.
+  // Placement is a pure function of the chunk coordinates, so re-loading a
+  // chunk reproduces the same pedestrians. See the module header for the
+  // full contract.
+  // ---------------------------------------------------------------------
+  pedestriansStream: {
+    enabled: false, // main.js enables this by default for endless+stream only
+    perChunk: 4, // pedestrian records per loaded chunk
+    maxPopulation: 64, // strict global cap across all loaded chunks
+    maxVisible: 4, // humans actually presented near the player (<= cap)
+    visibleRadius: 90, // metres; presentation eligibility (matches crowd.radius)
+    speedMin: 1.0, // per-record walk speed (m/s), drives animation playback rate
+    speedMax: 1.9,
+    seed: 70714, // population PRNG salt (independent of every other seed)
+  },
+
   player: {
     eyeHeight: 1.7,
     walkSpeed: 12, // metres / second

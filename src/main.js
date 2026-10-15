@@ -10,6 +10,7 @@ import { createWorld, isEndlessRequested } from './world/chunk.js';
 import { createPedestrians } from './world/pedestrians.js';
 import { createPedPeople } from './world/pedPeople.js';
 import { createCrowd } from './world/crowd.js';
+import { createStreamingPopulation } from './world/pedestriansStream.js';
 import { FirstPersonControls } from './controls.js';
 import { createVehicle, CarController } from './vehicle.js';
 import { createHud } from './hud.js';
@@ -260,6 +261,23 @@ function boot() {
     CONFIG.world.stream.enabled = streamParam === '1' || streamParam === 'true';
   }
 
+  // Phase B: streaming pedestrians. Only meaningful when BOTH the endless world
+  // and its streaming are active, so it is gated on them. For that one URL
+  // ("?world=endless&stream=1") the population is now ON BY DEFAULT so the main
+  // URL shows humans without an extra flag; "?pedestrians=0" (or "false") opts
+  // out and "?pedestrians=1"/"true" confirms it. Any other URL (the finite city,
+  // or endless WITHOUT streaming) keeps the config default
+  // (CONFIG.pedestriansStream.enabled = false) and nothing here runs, so those
+  // paths are unchanged. This stays a SEPARATE flag from "?crowd" / "?person"
+  // and from "?peds".
+  const streamingPedsParam = params.get('pedestrians');
+  if (CONFIG.pedestriansStream && CONFIG.world.endless && CONFIG.world.stream.enabled) {
+    CONFIG.pedestriansStream.enabled =
+      streamingPedsParam === null ||
+      streamingPedsParam === '1' ||
+      streamingPedsParam === 'true';
+  }
+
   const world = createWorld(scene, renderer, params);
   const controls = new FirstPersonControls(camera, renderer.domElement, world);
   controls.onLockChange = (locked, message) => {
@@ -339,6 +357,29 @@ function boot() {
 
   if (pedestrians && personHook) presenter = createPedPeople(scene);
   if (pedestrians && crowdHook) crowd = createCrowd(scene);
+
+  // Phase B: streaming pedestrians. Enabled by the param gate above (ON by default
+  // for the endless+streaming URL), and only when the world really exposes a
+  // loaded-chunk Map. It reuses the EXISTING human renderer (createCrowd -> sam.glb) - there is
+  // deliberately no second renderer. The finite-world AI above is untouched and
+  // still returns null here (its streaming safety gate), so no finite pedestrian
+  // ever runs against the infinite world's moving bounds.
+  let streamPeds = null;
+  let streamCrowd = null;
+  if (CONFIG.pedestriansStream.enabled && world && world._chunksMap) {
+    streamPeds = createStreamingPopulation(world, { enabled: true });
+    streamCrowd = createCrowd(scene, { max: streamPeds.maxVisible });
+  }
+
+  // Present the nearest streaming pedestrians through the shared crowd renderer.
+  // The controller's presentNearest() selects near-to-far, releases instances the
+  // renderer no longer claims, then places each claimed human. The renderer pools
+  // a fixed set of clones, so chunk unload and record removal reclaim instances
+  // without allocating or leaking anything.
+  function driveStreamCrowd(player) {
+    if (!streamPeds || !streamCrowd) return;
+    streamPeds.presentNearest(streamCrowd, player);
+  }
 
   function enterCar() {
     mode = 'drive';
@@ -505,6 +546,14 @@ function boot() {
       if (cc) chunkText = `${cc.cx}, ${cc.cz}`;
     }
 
+    // Phase B: reconcile the streaming pedestrian population with the chunk set
+    // that world.update() just changed, then present the nearest few through the
+    // shared crowd renderer (no-op unless the parameter gate enabled it).
+    if (streamPeds) {
+      streamPeds.sync(player);
+      driveStreamCrowd(player);
+    }
+
     // M4.2: pedestrians simulate from this single loop (no per-NPC timers).
     if (pedestrians) {
       pedestrians.update(dt, camera, player);
@@ -515,6 +564,9 @@ function boot() {
 
     // S1: advance each displayed crowd instance's own mixer (no-op when disabled).
     if (crowd) crowd.update(dt);
+
+    // Phase B: advance the streaming crowd's mixers (no-op unless opted in).
+    if (streamCrowd) streamCrowd.update(dt);
 
     renderer.render(scene, camera);
 
@@ -528,9 +580,9 @@ function boot() {
       speed: speedText,
       quality: presetLabel,
       shadows: CONFIG.graphics.shadows ? 'On' : 'Off',
-      peds: pedestrians ? pedestrians.count : 0,
+      peds: streamPeds ? streamPeds.count : pedestrians ? pedestrians.count : 0,
       humans: presenter ? presenter.active : 0,
-      crowd: crowd ? crowd.active : 0,
+      crowd: streamCrowd ? streamCrowd.active : crowd ? crowd.active : 0,
       resolution: `${resolutionState.label} · ${resolutionState.target.width}×${resolutionState.target.height}`,
       buffer: `${resolutionState.applied.actualWidth}×${resolutionState.applied.actualHeight}`,
       caps: caps.available && caps.maxRenderbuffer ? `GL max ${caps.maxRenderbuffer}` : 'GL max --',
