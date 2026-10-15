@@ -2,8 +2,9 @@
 //
 // This is a NEW procedural layout that lives on a stable, infinite global block
 // lattice. The finite city in src/world/city.js stays the default and is not
-// touched. Phase 1 deliberately generates ONE chunk (the central one) and no
-// streaming manager, no map UI, no pedestrian changes - those are later phases.
+// touched. Phase 1 generated ONE chunk (the central one); Phase 2 adds the
+// streaming manager (load + unload) in this file. The map UI and pedestrian
+// changes remain later phases.
 //
 // Why a new lattice (and not the finite layout)
 // ---------------------------------------------
@@ -54,6 +55,14 @@ export function chunkSpan() {
 // World centre of the chunk at integer index ci.
 export function chunkCenter(ci) {
   return ci * chunkSpan();
+}
+
+// Integer chunk index along one axis that contains world coordinate `coord`.
+// A chunk spans [ci*span - span/2, ci*span + span/2]; the exact +span/2 boundary
+// belongs to the higher chunk, matching the exclusive block ownership in
+// blocksInChunk(). floor(x/span + 0.5) is round-half-up.
+export function chunkIndexAt(coord) {
+  return Math.floor(coord / chunkSpan() + 0.5);
 }
 
 // The global block indices owned by chunk index ci. Each block belongs to
@@ -656,12 +665,19 @@ export function createChunk(parent, cx, cz, assets) {
 }
 
 // ---------------------------------------------------------------------------
-// The endless world object. In Phase 1 it builds ONLY the central chunk and
-// exposes the same API the finite city does (bounds / groundHeightAt /
-// resolveCollision / updateCulling) so controls, vehicles and pedestrians work
-// unchanged. No streaming, no map.
+// The endless world object. It exposes the same API the finite city does
+// (bounds / groundHeightAt / resolveCollision / updateCulling) so controls,
+// vehicles and pedestrians work unchanged. There is no map UI.
+// Phase 2: accepts optional initialChunks, stores chunks in a Map, computes
+// dynamic bounds from all loaded chunks, and collides against every loaded
+// chunk. Stage 0 adds guarded add/remove helpers that keep the Map, the chunks
+// array, the aggregate counts and the bounds consistent, and removes the
+// per-call AABB aggregation. Initial generation routes through addChunk() (so
+// duplicate coordinates are ignored) and removeChunk() refuses to empty the
+// loaded set. Phase 2.1/2.2.1b add automatic streaming (load + unload) in
+// _streamUpdate(), gated by CONFIG.world.stream.enabled (default false).
 // ---------------------------------------------------------------------------
-export function createEndlessWorld(scene, renderer) {
+export function createEndlessWorld(scene, renderer, initialChunks = [[0, 0]]) {
   const c = CONFIG.city;
   const S = chunkSpan();
   const assets = createChunkAssets(renderer);
@@ -670,42 +686,138 @@ export function createEndlessWorld(scene, renderer) {
   group.name = 'endless';
   scene.add(group);
 
-  const central = createChunk(group, 0, 0, assets);
-  const chunks = [central];
+  // Chunks stored in a Map keyed by "cx,cz" for O(1) lookup and iteration.
+  const chunks = new Map();
+  let totalBuildingCount = 0;
+  let totalPropCounts = { lamps: 0, trees: 0, bins: 0 };
 
-  const half = S / 2;
-  const bounds = {
-    min: -half + CONFIG.player.margin,
-    max: half - CONFIG.player.margin,
-  };
-  const aabbs = central.aabbs;
+  // Generate all initial chunks through addChunk(), which is duplicate-safe:
+  // repeated coordinates are ignored, so they can never create duplicate scene
+  // geometry or desynchronise the Map, chunks array, building/prop counts and
+  // bounds. (addChunk/computeBounds/refreshBounds are hoisted declarations.)
+  const chunksArray = []; // backward-compatible array for existing tests
+  let bounds; // recomputed by the refreshBounds() call below
+  for (const [cx, cz] of initialChunks) addChunk(cx, cz);
+  refreshBounds();
 
-  // Same push-out + clamp contract as city.js resolveCollision().
+  // Compute dynamic bounds as the union of all loaded chunk bounds + player
+  // margin. X and Z are kept INDEPENDENT so a non-square set of chunks is
+  // bounded correctly on each axis. `min`/`max` are retained as the
+  // conservative enclosing square (identical to the old values for square
+  // unions) so existing callers that read `bounds.min`/`bounds.max` keep working.
+  function computeBounds() {
+    const half = S / 2;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const chunk of chunks.values()) {
+      // Derive each axis from its OWN chunk coordinate (chunkCenter(cx)/cz), not
+      // from a shared square: a chunk at (cx, cz) spans
+      // [cx0-half, cx0+half] x [cz0-half, cz0+half]. Using one axis for both
+      // produced wrong Z bounds for asymmetric (non-diagonal) chunk sets.
+      const x0 = chunkCenter(chunk.cx);
+      const z0 = chunkCenter(chunk.cz);
+      if (x0 - half < minX) minX = x0 - half;
+      if (x0 + half > maxX) maxX = x0 + half;
+      if (z0 - half < minZ) minZ = z0 - half;
+      if (z0 + half > maxZ) maxZ = z0 + half;
+    }
+    // If no chunks (shouldn't happen), fall back to central chunk bounds.
+    if (!Number.isFinite(minX)) {
+      minX = -half; maxX = half; minZ = -half; maxZ = half;
+    }
+    const margin = CONFIG.player.margin;
+    // apply the margin independently to each axis
+    minX += margin; maxX -= margin;
+    minZ += margin; maxZ -= margin;
+    return {
+      minX,
+      maxX,
+      minZ,
+      maxZ,
+      // Legacy enclosing square for callers that still read min/max.
+      min: Math.min(minX, minZ),
+      max: Math.max(maxX, maxZ),
+    };
+  }
+
+  // --- Chunk set management (Stage 0 streaming foundation) -------------------
+  // Guarded lookup/add/remove that keep the Map, the backward-compatible array,
+  // the aggregate counts and the dynamic bounds consistent. addChunk never
+  // generates a duplicate (an existing "cx,cz" key is returned unchanged), and
+  // removeChunk disposes the chunk's OWN instance buffers via chunk.dispose()
+  // only - the shared geometry/material/texture assets are never touched.
+  function hasChunk(cx, cz) {
+    return chunks.has(`${cx},${cz}`);
+  }
+
+  function addChunk(cx, cz) {
+    const key = `${cx},${cz}`;
+    const existing = chunks.get(key);
+    if (existing) return existing; // guarded: never generate the same chunk twice
+    const chunk = createChunk(group, cx, cz, assets);
+    chunks.set(key, chunk);
+    chunksArray.push(chunk);
+    totalBuildingCount += chunk.buildingCount;
+    totalPropCounts.lamps += chunk.propCounts.lamps;
+    totalPropCounts.trees += chunk.propCounts.trees;
+    totalPropCounts.bins += chunk.propCounts.bins;
+    refreshBounds();
+    return chunk;
+  }
+
+  function removeChunk(cx, cz) {
+    const key = `${cx},${cz}`;
+    const chunk = chunks.get(key);
+    if (!chunk) return false;
+    // Safety guard: never let the loaded set become empty. With no chunks there
+    // is no ground, no building collision and an effectively invisible world,
+    // so the final loaded chunk is never removed.
+    // Player-chunk protection lives in the streaming caller: _streamUpdate()
+    // only removes chunks with Chebyshev distance > keepR, so the player's own
+    // chunk and its protected neighbours are never removal candidates.
+    if (chunks.size <= 1) return false;
+    chunks.delete(key);
+    const ai = chunksArray.indexOf(chunk);
+    if (ai !== -1) chunksArray.splice(ai, 1);
+    totalBuildingCount -= chunk.buildingCount;
+    totalPropCounts.lamps -= chunk.propCounts.lamps;
+    totalPropCounts.trees -= chunk.propCounts.trees;
+    totalPropCounts.bins -= chunk.propCounts.bins;
+    chunk.dispose(); // chunk-owned instance buffers + un-parent; NOT shared assets
+    refreshBounds();
+    return true;
+  }
+
+  // Same push-out + clamp contract as city.js resolveCollision(). Iterates the
+  // loaded chunks in place so no combined AABB array is allocated per call.
   function resolveCollision(point, radius) {
     let hit = false;
-    for (let i = 0; i < aabbs.length; i++) {
-      const a = aabbs[i];
-      const minX = a.minX - radius;
-      const maxX = a.maxX + radius;
-      const minZ = a.minZ - radius;
-      const maxZ = a.maxZ + radius;
-      if (point.x > minX && point.x < maxX && point.z > minZ && point.z < maxZ) {
-        const dxLeft = point.x - minX;
-        const dxRight = maxX - point.x;
-        const dzLeft = point.z - minZ;
-        const dzRight = maxZ - point.z;
-        const m = Math.min(dxLeft, dxRight, dzLeft, dzRight);
-        if (m === dxLeft) point.x = minX;
-        else if (m === dxRight) point.x = maxX;
-        else if (m === dzLeft) point.z = minZ;
-        else point.z = maxZ;
-        hit = true;
+    for (const chunk of chunks.values()) {
+      const aabbs = chunk.aabbs;
+      for (let i = 0; i < aabbs.length; i++) {
+        const a = aabbs[i];
+        const minX = a.minX - radius;
+        const maxX = a.maxX + radius;
+        const minZ = a.minZ - radius;
+        const maxZ = a.maxZ + radius;
+        if (point.x > minX && point.x < maxX && point.z > minZ && point.z < maxZ) {
+          const dxLeft = point.x - minX;
+          const dxRight = maxX - point.x;
+          const dzLeft = point.z - minZ;
+          const dzRight = maxZ - point.z;
+          const m = Math.min(dxLeft, dxRight, dzLeft, dzRight);
+          if (m === dxLeft) point.x = minX;
+          else if (m === dxRight) point.x = maxX;
+          else if (m === dzLeft) point.z = minZ;
+          else point.z = maxZ;
+          hit = true;
+        }
       }
     }
-    if (point.x < bounds.min) point.x = bounds.min;
-    if (point.x > bounds.max) point.x = bounds.max;
-    if (point.z < bounds.min) point.z = bounds.min;
-    if (point.z > bounds.max) point.z = bounds.max;
+    // Clamp to dynamic world bounds, independently per axis.
+    if (point.x < bounds.minX) point.x = bounds.minX;
+    if (point.x > bounds.maxX) point.x = bounds.maxX;
+    if (point.z < bounds.minZ) point.z = bounds.minZ;
+    if (point.z > bounds.maxZ) point.z = bounds.maxZ;
     return hit;
   }
 
@@ -723,19 +835,128 @@ export function createEndlessWorld(scene, renderer) {
     return groundY;
   }
 
+  // Helper to refresh bounds after chunks are added/removed (used by streaming).
+  function refreshBounds() {
+    bounds = computeBounds();
+  }
+
+  // Phase 2.0+ streaming hook. When CONFIG.world.stream.enabled is true it
+  // auto-loads nearby chunks and (Phase 2.2.1b) unloads distant ones; when false
+  // it is a pure report. Returns a reused scratch object - read .cx/.cz
+  // immediately, do not retain it.
+  const _playerChunk = { cx: 0, cz: 0 };
+  const _loadQueue = [];
+  let _streamedPlayerKey = null;
+
+  function _streamUpdate(pcx, pcz) {
+    // Normalized streaming settings (Phase 2.2.1a/2.2.1b): read once per call and
+    // clamped so the load/unload passes below can rely on the invariants
+    //   unloadR >= loadR      (hysteresis: never unload what we just loaded)
+    //   protectR <= unloadR   (the protected band sits inside the retention band)
+    const stream = CONFIG.world.stream;
+    const loadR = Math.max(0, (stream.loadRadius | 0));
+    const unloadR = Math.max((stream.unloadRadius | 0), loadR);
+    const protectR = Math.max(0, Math.min((stream.protectRadius | 0), unloadR));
+    const cap = Math.max(1, (stream.maxLoadedChunks | 0));
+    const unloadBudget = Math.max(0, (stream.maxChunkRemovalsPerFrame | 0));
+    // keepR: nothing within this Chebyshev distance of the player's chunk is ever
+    // unloaded. Since loadR <= keepR, the load set and the unload candidates are
+    // disjoint by construction - unloading can never remove a required chunk.
+    const keepR = Math.max(loadR, protectR, unloadR);
+
+    const key = `${pcx},${pcz}`;
+
+    // Rebuild the load queue whenever the player moves into a different chunk.
+    // Neighbourhood ordering: center (r=0) first, then ring 1, 2... to prefer
+    // nearer chunks.
+    if (key !== _streamedPlayerKey) {
+      _streamedPlayerKey = key;
+      _loadQueue.length = 0;
+      for (let r = 0; r <= loadR; r++) {
+        for (let dz = -r; dz <= r; dz++) {
+          for (let dx = -r; dx <= r; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+            const cx = pcx + dx;
+            const cz = pcz + dz;
+            const qkey = `${cx},${cz}`;
+            if (!chunks.has(qkey)) _loadQueue.push(cx, cz);
+          }
+        }
+      }
+    }
+
+    // Load at most one new chunk per frame, never exceeding maxLoadedChunks.
+    if (chunks.size < cap && _loadQueue.length >= 2) {
+      const cx = _loadQueue.shift();
+      const cz = _loadQueue.shift();
+      const k = `${cx},${cz}`;
+      if (!chunks.has(k)) {
+        addChunk(cx, cz);
+      }
+    }
+
+    // Phase 2.2.1b: unloading runs AFTER the load pass and only once the required
+    // neighbourhood is satisfied. `canStillLoad` is false when nothing more can be
+    // loaded this frame - either the queue is drained (all required chunks are
+    // present) or the cap blocks further loading (so room must be freed). In both
+    // cases unloading is safe/allowed, so a cap that is too small never deadlocks.
+    const canStillLoad = chunks.size < cap && _loadQueue.length >= 2;
+    if (!canStillLoad && unloadBudget > 0) {
+      // Respect maxChunkRemovalsPerFrame exactly: select the farthest safe
+      // candidate, remove it only AFTER the scan completes, then rescan before any
+      // next removal (never mutate the Map while iterating it).
+      for (let removed = 0; removed < unloadBudget; removed++) {
+        if (chunks.size <= 1) break; // never empty the loaded set
+        let victim = null;
+        let victimD = -1;
+        for (const chunk of chunks.values()) {
+          const d = Math.max(Math.abs(chunk.cx - pcx), Math.abs(chunk.cz - pcz));
+          if (d <= keepR) continue; // protected band: player's chunk + neighbours
+          if (d > victimD) {
+            victimD = d; // farthest-first; ties keep the first found (deterministic)
+            victim = chunk;
+          }
+        }
+        if (!victim) break; // nothing safe to remove
+        removeChunk(victim.cx, victim.cz); // reuse existing: counts + bounds + dispose
+      }
+    }
+  }
+
+  function update(px, pz) {
+    _playerChunk.cx = chunkIndexAt(px);
+    _playerChunk.cz = chunkIndexAt(pz);
+    const stream = CONFIG.world.stream;
+    if (stream && stream.enabled) {
+      _streamUpdate(_playerChunk.cx, _playerChunk.cz);
+    }
+    return _playerChunk;
+  }
+
   return {
     group,
     assets,
-    chunks,
-    bounds,
-    buildingCount: central.buildingCount,
-    propCounts: central.propCounts,
+    chunks: chunksArray, // backward-compatible array for existing tests
+    _chunksMap: chunks, // internal Map for streaming
+    get bounds() { return bounds; }, // dynamic getter (min/max + per-axis)
+    // Live aggregates: getters so chunks added/removed later are reflected
+    // immediately (a plain value would freeze at creation time).
+    get buildingCount() { return totalBuildingCount; },
+    get propCounts() { return totalPropCounts; },
+    // Stage 0 streaming foundation: guarded chunk set management.
+    hasChunk,
+    addChunk,
+    removeChunk,
     groundHeightAt,
     resolveCollision,
     culler: null,
-    updateCulling() {},
+    updateCulling() {}, // no-op: the endless world applies no distance culling
+    // Phase 2.2.1b: when enabled, loads nearby chunks and unloads distant ones;
+    // Phase 2.0 behaviour (report only) remains when disabled.
+    update,
+    refreshBounds, // exposed for streaming steps
     dispose() {
-      for (let i = 0; i < chunks.length; i++) chunks[i].dispose();
+      for (const chunk of chunks.values()) chunk.dispose();
       scene.remove(group);
       assets.dispose();
     },

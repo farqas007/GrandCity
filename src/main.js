@@ -450,6 +450,7 @@ function boot() {
 
     let speedText = '--';
     let promptText = '';
+    let chunkText = '--';
 
     if (mode === 'drive') {
       const k = controls.keys;
@@ -468,15 +469,27 @@ function boot() {
       if (d <= CONFIG.vehicle.enterRadius) promptText = 'Press E to enter the car';
     }
 
+    // The "player" is the car while driving, otherwise the walking camera. It is
+    // shared by the endless-world streamer hook (below) and the pedestrians.
+    const player = mode === 'drive' ? car.position : camera.position;
+
     env.update(camera);
 
     // M4.1: distance culling for street props (no-op unless enabled).
     if (world.updateCulling) world.updateCulling(camera);
 
-    // M4.2: pedestrians simulate from this single loop (no per-NPC timers). The
-    // "player" is the car while driving, otherwise the walking camera.
+    // Phase 2.0/2.2.1b: endless-world streamer hook. world.update() always
+    // REPORTS the player's chunk, and when CONFIG.world.stream.enabled is true it
+    // also LOADS nearby chunks and UNLOADS distant ones (unloading is budgeted by
+    // maxChunkRemovalsPerFrame). The finite city has no world.update, so this is
+    // skipped there and that behaviour is unchanged.
+    if (world.update) {
+      const cc = world.update(player.x, player.z);
+      if (cc) chunkText = `${cc.cx}, ${cc.cz}`;
+    }
+
+    // M4.2: pedestrians simulate from this single loop (no per-NPC timers).
     if (pedestrians) {
-      const player = mode === 'drive' ? car.position : camera.position;
       pedestrians.update(dt, camera, player);
     }
 
@@ -493,6 +506,7 @@ function boot() {
       calls: renderer.info.render.calls,
       triangles: renderer.info.render.triangles,
       position: positionText,
+      chunk: chunkText,
       mode: mode === 'drive' ? 'Driving' : 'Walking',
       speed: speedText,
       quality: presetLabel,

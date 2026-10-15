@@ -34,6 +34,7 @@ export function createHud() {
   add('draws', 'Draw calls');
   add('tris', 'Triangles');
   add('pos', 'Position (x, z)');
+  add('chunk', 'Chunk (cx, cz)');
   add('mode', 'Mode');
   add('speed', 'Speed');
   add('quality', 'Quality');
@@ -75,6 +76,7 @@ export function createHud() {
         values.draws.textContent = String(info.calls);
         values.tris.textContent = info.triangles.toLocaleString();
         values.pos.textContent = info.position;
+        values.chunk.textContent = info.chunk === undefined ? '--' : info.chunk;
         values.mode.textContent = info.mode;
         values.speed.textContent = info.speed;
         values.quality.textContent = info.quality;

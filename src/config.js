@@ -427,14 +427,34 @@ export const CONFIG = {
   // ---------------------------------------------------------------------
   // Phase 1 - opt-in endless world (?world=endless). A NEW procedural layout
   // on a stable global block lattice; the finite `city` above remains the
-  // default and is completely untouched. Only the central chunk is generated
-  // in Phase 1 (no streaming yet) - see src/world/chunk.js. Nothing here runs
+  // default and is completely untouched. Streaming (Phase 2) is opt-in and
+  // DEFAULT OFF: with `stream.enabled:false` only the central chunk exists -
+  // see src/world/chunk.js. Nothing here runs
   // unless ?world=endless is present.
   // ---------------------------------------------------------------------
   world: {
     endless: false, // set true by main.js when ?world=endless is present
     chunkBlocks: 2, // blocks per chunk side (chunk = chunkBlocks^2 blocks; even)
     seed: 90210, // salt for the per-chunk PRNG (global position still dominates)
+    // Endless-world streaming scaffolding. DEFAULT OFF: with `enabled:false`
+    // update() only reports the player's chunk, so the single-chunk endless world
+    // and the finite city stay byte-identical. Radii/caps are in chunks
+    // (Chebyshev distance) and kept conservative for the low-end target machine.
+    // Phase 2.1/2.2.1b (implemented): when enabled, update() auto-LOADS neighbours
+    // within `loadRadius` (one chunk per frame, capped by `maxLoadedChunks`) and
+    // auto-UNLOADS chunks farther than `unloadRadius`, `maxChunkRemovalsPerFrame`
+    // at a time, while `protectRadius` widens the never-removed band.
+    // `maxChunksPerFrame` is reserved/unused (loading is hard-capped at one chunk
+    // per frame regardless).
+    stream: {
+      enabled: false, // when true, auto-load AND auto-unload nearby chunks
+      loadRadius: 1, // chunks to auto-load around the player
+      unloadRadius: 2, // remove chunks beyond this Chebyshev distance
+      protectRadius: 1, // widen never-removed band (clamped <= unloadRadius)
+      maxChunksPerFrame: 1, // RESERVED/unused; loading hard-caps at one/frame
+      maxChunkRemovalsPerFrame: 1, // max chunks unloaded per frame
+      maxLoadedChunks: 49, // hard safety cap (7x7 chunks)
+    },
   },
 
   player: {

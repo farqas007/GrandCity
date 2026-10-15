@@ -111,6 +111,15 @@ export function createPedestrians(scene, world, opts = {}) {
   // realistic humans are the ONLY pedestrians rendered.
   const showBoxes = opts.showBoxes !== false;
 
+  // Phase 2.4 Step 0: streaming safety gate. The endless world's streaming moves
+  // the world bounds with the player and unloads distant chunks, which the
+  // finite-grid, once-cached-bounds pedestrian model cannot follow (see the
+  // Phase 2.4 audit). So pedestrians are disabled when the ENDLESS world is
+  // active AND streaming is enabled, unless the caller explicitly opts in with
+  // opts.allowStreaming === true (reserved for Phase 2.4 Step 1+ work). Purely
+  // additive: the finite city and endless-without-streaming are unchanged.
+  const allowStreaming = opts.allowStreaming === true;
+
   // S1: crowd mode passes opts.count so the number of SIMULATED pedestrians
   // equals the number of realistic human instances - there are no extra,
   // invisible pedestrians. Absent the override the M4.2 budget is used
@@ -132,6 +141,20 @@ export function createPedestrians(scene, world, opts = {}) {
     !world.bounds ||
     typeof world.groundHeightAt !== 'function' ||
     typeof world.resolveCollision !== 'function'
+  ) {
+    return null;
+  }
+
+  // Phase 2.4 Step 0: streaming safety gate (see allowStreaming above). Returning
+  // null here is what keeps enabling streaming from ever stranding NPCs on
+  // unloaded chunks or clamping them to the moving bounds. Opt back in with
+  // opts.allowStreaming only once the streaming-aware pedestrian work (Step 1+)
+  // has landed.
+  if (
+    CONFIG.world.endless &&
+    CONFIG.world.stream &&
+    CONFIG.world.stream.enabled &&
+    !allowStreaming
   ) {
     return null;
   }
