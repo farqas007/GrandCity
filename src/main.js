@@ -130,15 +130,21 @@ if (personParam !== null) {
     personParam === '1' || personParam === 'true' || personParam === 'sam';
 }
 
-// S1: optional realistic-crowd presentation (up to CONFIG.crowd.max instances of
-// the one CC0 human model). Opt-in only — "?crowd=1"; the default leaves the box
-// pedestrians completely unchanged. It is a superset of the single-instance
-// "?person" layer, so when both are requested the crowd takes precedence (they
-// would otherwise fight over the same nearest pedestrians). "?person=1" alone is
-// unchanged.
+// S1: realistic-crowd presentation (up to CONFIG.crowd.max instances of the one
+// CC0 human model). It is a superset of the single-instance "?person" layer, so
+// when both are requested the crowd takes precedence (they would otherwise fight
+// over the same nearest pedestrians). "?crowd=1" forces it on, "?crowd=0" forces
+// it off, and when neither "?crowd" nor "?person" is given it defaults ON - so
+// the default representation is the realistic human models rather than the
+// procedural box pedestrians. The box code itself is untouched and still
+// reachable via "?crowd=0" (or "?person=1").
 const crowdParam = params.get('crowd');
 if (crowdParam !== null) {
   CONFIG.crowd.enabled = crowdParam === '1' || crowdParam === 'true';
+} else if (personParam === null) {
+  // No explicit human-layer choice -> default to the realistic crowd so the
+  // procedural box pedestrians are not the default representation.
+  CONFIG.crowd.enabled = true;
 }
 if (CONFIG.crowd.enabled) CONFIG.person.enabled = false;
 
@@ -243,6 +249,17 @@ function boot() {
   // Phase 1: opt-in endless world (?world=endless). The default URL keeps the
   // finite city; createWorld() is the single selection point.
   CONFIG.world.endless = isEndlessRequested(params);
+
+  // Phase 1: opt-in endless-world streaming ("?world=endless&stream=1"). Only
+  // meaningful WITH the endless world, so it is gated on that selection: the
+  // finite city has no world.update(), so streaming can never run there. When
+  // absent, the config default (CONFIG.world.stream.enabled = false) is kept, so
+  // plain "?world=endless" stays the single-chunk world exactly as before.
+  const streamParam = params.get('stream');
+  if (CONFIG.world.endless && streamParam !== null) {
+    CONFIG.world.stream.enabled = streamParam === '1' || streamParam === 'true';
+  }
+
   const world = createWorld(scene, renderer, params);
   const controls = new FirstPersonControls(camera, renderer.domElement, world);
   controls.onLockChange = (locked, message) => {
